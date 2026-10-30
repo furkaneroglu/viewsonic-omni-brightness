@@ -92,7 +92,7 @@ viewsonic-omni-brightness/
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/viewsonic-omni-brightness.git
+git clone https://github.com/furkaneroglu/viewsonic-omni-brightness.git
 cd viewsonic-omni-brightness
 ```
 
