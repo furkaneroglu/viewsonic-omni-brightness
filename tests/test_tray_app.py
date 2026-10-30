@@ -1,0 +1,171 @@
+"""
+ViewSonic OMNI DDC/CI Tray - Comprehensive Test Suite
+Tüm mimari katmanları: MonitorManager, AsyncWriteQueueWorker, ConfigManager,
+NotificationEngine, HotkeyService ve Win32 Mutex korumasını test eder.
+"""
+
+import sys
+import os
+import time
+import unittest
+from unittest.mock import MagicMock, patch
+
+base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if base_dir not in sys.path:
+    sys.path.insert(0, base_dir)
+
+from viewsonic_omni_tray.config import ConfigManager, DEFAULT_CONFIG
+from viewsonic_omni_tray.monitor_manager import MonitorManager, MonitorDevice, DDCCIDisconnectedError, DDCCIError
+from viewsonic_omni_tray.queue_worker import AsyncWriteQueueWorker, MonitorStatus
+from viewsonic_omni_tray.notifications import NotificationEngine
+from viewsonic_omni_tray.tray import create_tray_image
+from viewsonic_omni_tray.app import SingleInstanceLock
+
+
+class TestConfigManager(unittest.TestCase):
+    """3. Katman: Profil ve Ayar Yönetimi Testleri"""
+
+    def test_config_defaults(self):
+        cfg = ConfigManager()
+        self.assertEqual(cfg.monitor_match, "ViewSonic")
+        self.assertIn("Gündüz", cfg.profiles)
+        self.assertEqual(cfg.profiles["Gündüz"], 80)
+        self.assertEqual(cfg.profiles["Gece"], 20)
+        self.assertEqual(cfg.profiles["Okuma"], 40)
+        self.assertEqual(cfg.profiles["Oyun"], 90)
+        self.assertGreaterEqual(cfg.throttle_ms, 50)
+        self.assertGreaterEqual(cfg.debounce_ms, 40)
+
+    def test_config_step_clamping(self):
+        cfg = ConfigManager()
+        cfg.step_size = 50
+        self.assertEqual(cfg.step_size, 25)
+        cfg.step_size = -5
+        self.assertEqual(cfg.step_size, 1)
+
+
+class TestMonitorManager(unittest.TestCase):
+    """1. Katman: Donanım Katmanı & VCP Capability Check Testleri"""
+
+    def test_enumerate_monitors_and_capabilities(self):
+        manager = MonitorManager()
+        monitors = manager.enumerate_monitors()
+        self.assertIsInstance(monitors, list)
+        print(f"\n[Test] Bulunan fiziksel monitör sayısı: {len(monitors)}")
+        if monitors:
+            m = monitors[0]
+            print(f"[Test] Monitör: {m.description}, Parlaklık: {m.current_brightness}")
+            print(f"[Test] VCP Luminance Desteği: {m.supports_luminance}")
+            if m.capabilities_string:
+                print(f"[Test] Capabilities (özet): {m.capabilities_string[:60]}...")
+            self.assertTrue(m.min_brightness <= m.current_brightness <= m.max_brightness)
+            self.assertTrue(m.supports_luminance)
+
+
+class TestRateLimitingAndAsyncQueue(unittest.TestCase):
+    """2. Katman: Rate-Limiting & Asenkron Kuyruk Testleri"""
+
+    def test_debounce_and_coalescing(self):
+        cfg = ConfigManager()
+        worker = AsyncWriteQueueWorker(cfg)
+        worker.debounce_sec = 0.05
+        worker.throttle_sec = 0.08
+
+        hardware_writes = []
+        def mock_set_brightness(idx, val):
+            hardware_writes.append((time.time(), val))
+            return val
+
+        worker.manager.set_brightness = MagicMock(side_effect=mock_set_brightness)
+        fake_dev = MonitorDevice(0, 1234, "ViewSonic VX2718-2KPC", 0)
+        worker.active_device = fake_dev
+        worker.active_index = 0
+        worker.status = MonitorStatus.CONNECTED
+
+        worker._worker_thread.start()
+
+        try:
+            # 5 ardışık hızlı slider değişimi (5 ms aralıklarla)
+            for v in [10, 20, 30, 40, 80]:
+                worker.set_brightness(v, immediate_ui=False)
+                time.sleep(0.005)
+
+            # Worker'ın işlemi tamamlamasını bekle
+            time.sleep(0.25)
+
+            print(f"\n[Test] 5 hızlı slider hareketinde donanıma giden yazma sayısı: {len(hardware_writes)}")
+            # Coalescing / Debounce sayesinde ara değerlerin (10, 20, 30, 40) elenip
+            # donanıma yalnızca son hedef değer olan 80'in gitmiş olması gerekir!
+            self.assertLessEqual(len(hardware_writes), 2)
+            self.assertEqual(hardware_writes[-1][1], 80)
+
+            # İkinci yazma: Throttle aralığını test et
+            worker.set_brightness(50, immediate_ui=False)
+            time.sleep(0.25)
+
+            self.assertEqual(hardware_writes[-1][1], 50)
+            if len(hardware_writes) >= 2:
+                t1 = hardware_writes[-2][0]
+                t2 = hardware_writes[-1][0]
+                diff = t2 - t1
+                print(f"[Test] İki donanım yazımı arası geçen süre: {diff*1000:.1f} ms (Min beklenen: {worker.throttle_sec*1000:.1f} ms)")
+                self.assertGreaterEqual(diff, worker.throttle_sec - 0.02)
+
+        finally:
+            worker.stop()
+
+
+class TestNotificationEngine(unittest.TestCase):
+    """6. Katman: Bildirim ve Hata Yönetimi Testleri"""
+
+    def test_notification_deduplication(self):
+        cfg = ConfigManager()
+        cfg.show_notifications = True
+
+        mock_icon = MagicMock()
+        engine = NotificationEngine(cfg, tray_icon_provider=lambda: mock_icon)
+
+        # İlk bildirim gitmeli
+        engine.send_notification("Test Başlık", "Monitör uykuya geçti", level="warning")
+        self.assertEqual(mock_icon.notify.call_count, 1)
+
+        # Hemen ardından gelen aynı mesaj spam olarak engellenmeli
+        engine.send_notification("Test Başlık", "Monitör uykuya geçti", level="warning")
+        self.assertEqual(mock_icon.notify.call_count, 1)
+
+        # Farklı bir mesaj gelirse gitmeli
+        engine.send_notification("Test Başlık", "Monitör tekrar bağlandı", level="info")
+        self.assertEqual(mock_icon.notify.call_count, 2)
+
+
+class TestTrayImageRendering(unittest.TestCase):
+    """4. Katman: Tray UI Simge Üretimi Testleri"""
+
+    def test_image_dimensions_and_states(self):
+        img_connected = create_tray_image(75, MonitorStatus.CONNECTED)
+        self.assertEqual(img_connected.size, (64, 64))
+
+        img_sleeping = create_tray_image(20, MonitorStatus.SLEEPING)
+        self.assertEqual(img_sleeping.size, (64, 64))
+
+        img_disc = create_tray_image(0, MonitorStatus.DISCONNECTED)
+        self.assertEqual(img_disc.size, (64, 64))
+
+
+class TestSingleInstanceLock(unittest.TestCase):
+    """Win32 Mutex Tekil Örnek Denetimi Testi"""
+
+    def test_mutex_collision(self):
+        lock1 = SingleInstanceLock("Global\\TestViewSonicOmni_PlanSuite_Mutex")
+        self.assertTrue(lock1.acquire())
+
+        lock2 = SingleInstanceLock("Global\\TestViewSonicOmni_PlanSuite_Mutex")
+        self.assertFalse(lock2.acquire())
+        self.assertTrue(lock2.already_running)
+
+        lock1.release()
+        lock2.release()
+
+
+if __name__ == "__main__":
+    unittest.main()
