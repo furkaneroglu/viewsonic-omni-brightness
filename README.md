@@ -24,14 +24,11 @@ You don't need Python or any developer tools!
 
 ## 🌟 Key Features
 
-* **🎛️ System Tray & Quick Slider:** Click the golden sun icon in the notification area to open a sleek dark-themed popup with a live brightness slider, stepper buttons (`-10%`, `-5%`, `+5%`, `+10%`), and one-click profile buttons.
-* **⌨️ Global Hotkeys:** Control brightness anytime, anywhere (even while gaming full-screen):
-  * `Ctrl + Alt + Up`: Brightness **+5%**
-  * `Ctrl + Alt + Down`: Brightness **-5%**
-  * `Ctrl + Alt + 1`: **Day Profile (80%)**
-  * `Ctrl + Alt + 2`: **Night Profile (20%)**
-  * `Ctrl + Alt + 3`: **Reading Profile (40%)**
-  * `Ctrl + Alt + 4`: **Gaming Profile (90%)**
+* **🎛️ System Tray & Quick Control Panel:** Click the golden sun icon in the notification area to open a sleek dark-themed popup with live sliders for **Brightness** and **Monitor Speaker Volume**, stepper buttons, one-click input buttons (**DisplayPort, HDMI 1, HDMI 2**), and quick profile buttons.
+* **🔌 Instant Input Switching (VCP 0x60):** Switch between your PC, Console (PS5/Xbox), and Laptop across DisplayPort, HDMI 1, and HDMI 2 with a single hotkey (`Ctrl + Alt + I`) or via the tray menu.
+* **🔊 Monitor Audio Volume Control (VCP 0x62 & 0x8D):** Adjust or mute your monitor's internal speakers / 3.5mm headphone jack directly from Windows.
+* **🌙 Sleep / Standby Mode (VCP 0xD6):** Instantly put your monitor into energy-saving Standby mode (`Ctrl + Alt + P`) without touching the power button.
+* **⌨️ Global Hotkeys:** Control brightness, volume, inputs, and sleep mode anytime (even in full-screen games).
 * **🖥️ On-Screen Display (OSD HUD):** Changing brightness via hotkeys displays a semi-transparent, modern floating HUD bar that smoothly auto-dismisses after 1.4 seconds.
 * **🛡️ Hardware Protection (Debounce & Throttling):** DDC/CI communicates over an I2C bus at 100 kHz. Flooding it with commands can freeze the monitor microcontroller. This app applies **80ms debounce coalescing** and **100ms hardware throttling** — your UI stays 100% responsive while your monitor's I2C bus stays safe.
 * **🔄 Fault-Tolerant Watchdog:** When your monitor enters DPMS sleep mode or powers off, the app won't crash or freeze. The background watchdog service silently polls and re-syncs brightness as soon as the monitor wakes up.
@@ -50,6 +47,11 @@ You don't need Python or any developer tools!
 | `Ctrl + Alt + 2` | **Night Profile** | Sets brightness directly to **20%** |
 | `Ctrl + Alt + 3` | **Reading Profile** | Sets brightness directly to **40%** |
 | `Ctrl + Alt + 4` | **Gaming Profile** | Sets brightness directly to **90%** |
+| `Ctrl + Alt + PgUp` | **Volume Up** | Increases monitor audio volume by 5% |
+| `Ctrl + Alt + PgDn` | **Volume Down** | Decreases monitor audio volume by 5% |
+| `Ctrl + Alt + M` | **Volume Mute** | Toggles monitor speaker mute / unmute |
+| `Ctrl + Alt + I` | **Cycle Input** | Switches between DisplayPort, HDMI 1, and HDMI 2 |
+| `Ctrl + Alt + P` | **Sleep Monitor** | Immediately puts monitor into Standby power mode |
 
 *All shortcuts and percentages can be fully customized in the Settings window or via `%APPDATA%\ViewSonicOmniTray\config.json`.*
 

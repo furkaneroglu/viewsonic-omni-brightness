@@ -10,6 +10,7 @@ __pycache__/
 build/
 dist/
 downloads/
+*.exe
 eggs/
 .eggs/
 lib/

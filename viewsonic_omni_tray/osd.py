@@ -1,16 +1,16 @@
 """
 ViewSonic OMNI DDC/CI Tray - On-Screen Display (OSD HUD) Overlay
-Kısayol tuşları veya harici değişimlerde ekranda beliren şık, modern parlaklık göstergesi.
+Parlaklık, Ses, Giriş Kaynağı ve Güç durumlarında ekranda beliren şık, modern gösterge.
 """
 
 import tkinter as tk
 from typing import Optional
-from .config import AppConfig
+from .config import ConfigManager
 
 class OSDOverlay:
     """Ekran üzerinde şık, yarı saydam ve otomatik kaybolan OSD HUD penceresi."""
 
-    def __init__(self, root: tk.Tk, config: AppConfig):
+    def __init__(self, root: tk.Tk, config: ConfigManager):
         self.root = root
         self.config = config
         self._window: Optional[tk.Toplevel] = None
@@ -28,11 +28,9 @@ class OSDOverlay:
         self._window.attributes("-alpha", 0.94)
         self._window.configure(bg="#18181b")
 
-        # Kenarlık ve arka plan taşıyıcı frame
         self.frame = tk.Frame(self._window, bg="#18181b", highlightbackground="#3f3f46", highlightthickness=1)
         self.frame.pack(fill=tk.BOTH, expand=True)
 
-        # Üst bilgi satırı: Monitör Adı ve Eylem
         self.title_label = tk.Label(
             self.frame,
             text="ViewSonic OMNI",
@@ -42,7 +40,6 @@ class OSDOverlay:
         )
         self.title_label.pack(pady=(12, 2))
 
-        # Yüzde ve İkon satırı
         self.value_label = tk.Label(
             self.frame,
             text="☀️ Parlaklık: %50",
@@ -52,7 +49,6 @@ class OSDOverlay:
         )
         self.value_label.pack(pady=(0, 8))
 
-        # Modern Parlaklık Barı (Canvas)
         self.canvas = tk.Canvas(
             self.frame,
             width=280,
@@ -62,32 +58,61 @@ class OSDOverlay:
         )
         self.canvas.pack(pady=(0, 12))
 
-    def show(self, monitor_name: str, brightness: int, action_title: Optional[str] = None):
-        """OSD HUD penceresini konumlandırır, günceller ve gösterir."""
+    def show(
+        self,
+        monitor_name: str,
+        value: int,
+        action_title: Optional[str] = None,
+        hud_type: str = "brightness",
+        is_muted: bool = False
+    ):
+        """OSD HUD penceresini günceller ve ekranda gösterir."""
         if not self.config.show_osd:
             return
 
         if self._window is None:
             self._create_window()
 
-        # İptal edilmiş eski zamanlayıcı varsa temizle
         if self._hide_timer_id is not None:
             self.root.after_cancel(self._hide_timer_id)
             self._hide_timer_id = None
 
-        # Metinleri güncelle
         header = action_title if action_title else monitor_name
         self.title_label.config(text=header)
 
-        # Parlaklık değerine göre ikon seçimi
-        if brightness >= 70:
-            sun_icon = "☀️"
-        elif brightness >= 35:
-            sun_icon = "🌤️"
-        else:
-            sun_icon = "🌙"
+        # Bar rengi ve ikon belirleme
+        bar_color = "#f59e0b" # Amber (Parlaklık)
 
-        self.value_label.config(text=f"{sun_icon}  Parlaklık: %{brightness}")
+        if hud_type == "volume":
+            bar_color = "#06b6d4" # Camgöbeği (Ses)
+            if is_muted or value == 0:
+                icon_text = "🔇  Ses: Sessiz (Mute)"
+                fill_ratio = 0.0
+            else:
+                icon_text = f"🔊  Ses Seviyesi: %{value}"
+                fill_ratio = max(0.0, min(1.0, value / 100.0))
+            self.value_label.config(text=icon_text)
+
+        elif hud_type == "input":
+            # action_title giriş adını taşır
+            self.value_label.config(text=f"🔌  Giriş: {action_title or 'Bilinmiyor'}")
+            self.title_label.config(text="Giriş Kaynağı Değiştirildi")
+            fill_ratio = 1.0
+            bar_color = "#10b981" # Yeşil
+
+        elif hud_type == "sleep":
+            self.value_label.config(text="🌙  Monitör Uyku Moduna Alındı")
+            fill_ratio = 0.0
+
+        else: # brightness
+            if value >= 70:
+                sun_icon = "☀️"
+            elif value >= 35:
+                sun_icon = "🌤️"
+            else:
+                sun_icon = "🌙"
+            self.value_label.config(text=f"{sun_icon}  Parlaklık: %{value}")
+            fill_ratio = max(0.0, min(1.0, value / 100.0))
 
         # Barı çiz
         self.canvas.delete("all")
@@ -95,17 +120,14 @@ class OSDOverlay:
         bar_h = 14
         radius = 6
 
-        # Arka plan barı (Koyu gri kapsül)
         self._draw_pill(self.canvas, 0, 0, bar_w, bar_h, radius=radius, fill="#27272a")
 
-        # Doluluk barı (Canlı kehribar/altın kapsül)
-        fill_w = max(0, min(bar_w, int(bar_w * (brightness / 100.0))))
+        fill_w = int(bar_w * fill_ratio)
         if fill_w > radius * 2:
-            self._draw_pill(self.canvas, 0, 0, fill_w, bar_h, radius=radius, fill="#f59e0b")
+            self._draw_pill(self.canvas, 0, 0, fill_w, bar_h, radius=radius, fill=bar_color)
         elif fill_w > 0:
-            self.canvas.create_rectangle(0, 0, fill_w, bar_h, fill="#f59e0b", outline="")
+            self.canvas.create_rectangle(0, 0, fill_w, bar_h, fill=bar_color, outline="")
 
-        # Ekranın alt-orta kısmına konumlandır
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
         x = (screen_w - self.width) // 2
@@ -115,12 +137,10 @@ class OSDOverlay:
         self._window.deiconify()
         self._window.lift()
 
-        # Süre dolunca gizle
         duration = self.config.data.get("ui", {}).get("osd_duration_ms", 1400)
         self._hide_timer_id = self.root.after(duration, self.hide)
 
     def hide(self):
-        """Pencereyi gizler."""
         if self._window is not None:
             self._window.withdraw()
         self._hide_timer_id = None

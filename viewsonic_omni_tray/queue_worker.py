@@ -1,13 +1,14 @@
 """
 ViewSonic OMNI DDC/CI Tray - AsyncWriteQueueWorker (Rate-Limiting & Asenkron Kuyruk)
 Donanım I2C yolunu tıkamamak için kuyruğa alma, debounce, throttling ve periyodik watchdog mimarisi.
+Parlaklık, Ses, Giriş Kaynağı ve Güç modunu asenkron olarak yönetir.
 """
 
 import time
 import threading
 from enum import Enum
 from typing import List, Optional, Callable, Dict, Any
-from .monitor_manager import MonitorManager, MonitorDevice, DDCCIError, DDCCIDisconnectedError
+from .monitor_manager import MonitorManager, MonitorDevice, INPUT_SOURCES, POWER_MODES, DDCCIError, DDCCIDisconnectedError
 from .config import ConfigManager
 
 class MonitorStatus(Enum):
@@ -34,44 +35,61 @@ class AsyncWriteQueueWorker:
         self.status: MonitorStatus = MonitorStatus.DISCONNECTED
         self.status_message: str = "Başlatılıyor..."
 
+        # Parlaklık Durumu
         self._current_brightness: int = 50
         self._target_brightness: int = 50
+
+        # Ses Durumu (VCP 0x62) & Mute (0x8D)
+        self._current_volume: int = 50
+        self._target_volume: int = 50
+        self._is_muted: bool = False
+
+        # Giriş Kaynağı Durumu (VCP 0x60)
+        self._current_input: int = 0x12 # Varsayılan HDMI 2
+        self.supported_inputs: List[int] = [0x0F, 0x11, 0x12] # DP, HDMI 1, HDMI 2
+
         self._last_write_timestamp: float = 0.0
 
-        # Donanım Koruması Zamanlama Parametreleri (ms -> sn)
+        # Zamanlama Parametreleri
         self.throttle_sec: float = max(0.05, self.config.throttle_ms / 1000.0)
         self.debounce_sec: float = max(0.04, self.config.debounce_ms / 1000.0)
         self.watchdog_interval: float = max(5.0, float(self.config.watchdog_interval_s))
 
-        # Thread senkronizasyonu
+        # Senkronizasyon
         self._lock = threading.Lock()
         self._request_event = threading.Event()
         self._stop_event = threading.Event()
 
         # UI ve Bildirim dinleyicileri
         self._brightness_listeners: List[Callable[[int, bool], None]] = []
+        self._volume_listeners: List[Callable[[int, bool], None]] = []
+        self._input_listeners: List[Callable[[int, str], None]] = []
         self._status_listeners: List[Callable[[MonitorStatus, str], None]] = []
         self._device_listeners: List[Callable[[List[MonitorDevice], Optional[MonitorDevice]], None]] = []
-        self._notification_listeners: List[Callable[[str, str, str], None]] = [] # (title, message, type)
+        self._notification_listeners: List[Callable[[str, str, str], None]] = []
 
         # Arka plan iş parçacıkları
         self._worker_thread = threading.Thread(target=self._hardware_worker_loop, name="DDC-WriteWorker", daemon=True)
         self._watchdog_thread = threading.Thread(target=self._watchdog_loop, name="DDC-Watchdog", daemon=True)
 
     def start(self):
-        """Monitörleri ilk defa tarar ve arka plan iş parçacıklarını başlatır."""
         self.rescan_monitors()
         self._worker_thread.start()
         self._watchdog_thread.start()
 
     def stop(self):
-        """Arka plan iş parçacıklarını temiz şekilde durdurur."""
         self._stop_event.set()
         self._request_event.set()
 
     # --- Dinleyici Kayıt Metotları ---
     def add_brightness_listener(self, cb: Callable[[int, bool], None]):
         self._brightness_listeners.append(cb)
+
+    def add_volume_listener(self, cb: Callable[[int, bool], None]):
+        self._volume_listeners.append(cb)
+
+    def add_input_listener(self, cb: Callable[[int, str], None]):
+        self._input_listeners.append(cb)
 
     def add_status_listener(self, cb: Callable[[MonitorStatus, str], None]):
         self._status_listeners.append(cb)
@@ -87,32 +105,45 @@ class AsyncWriteQueueWorker:
             try:
                 cb(value, from_hardware)
             except Exception as e:
-                print(f"[!] Brightness listener hatası: {e}")
+                print(f"[!] Brightness callback error: {e}")
+
+    def _notify_volume(self, value: int, is_muted: bool = False):
+        for cb in list(self._volume_listeners):
+            try:
+                cb(value, is_muted)
+            except Exception as e:
+                print(f"[!] Volume callback error: {e}")
+
+    def _notify_input(self, input_code: int, input_name: str):
+        for cb in list(self._input_listeners):
+            try:
+                cb(input_code, input_name)
+            except Exception as e:
+                print(f"[!] Input callback error: {e}")
 
     def _notify_status(self, status: MonitorStatus, message: str):
         for cb in list(self._status_listeners):
             try:
                 cb(status, message)
             except Exception as e:
-                print(f"[!] Status listener hatası: {e}")
+                print(f"[!] Status callback error: {e}")
 
     def _notify_devices(self):
         for cb in list(self._device_listeners):
             try:
                 cb(self.devices, self.active_device)
             except Exception as e:
-                print(f"[!] Device listener hatası: {e}")
+                print(f"[!] Device callback error: {e}")
 
     def _notify_user(self, title: str, message: str, level: str = "info"):
         for cb in list(self._notification_listeners):
             try:
                 cb(title, message, level)
             except Exception as e:
-                print(f"[!] Notification listener hatası: {e}")
+                print(f"[!] Notification callback error: {e}")
 
     # --- Monitör Tarama & Seçim ---
     def rescan_monitors(self) -> bool:
-        """Sisteme bağlı monitörleri tarar, ViewSonic veya hedef monitörü aktif seçer."""
         with self._lock:
             try:
                 devs = self.manager.enumerate_monitors()
@@ -128,12 +159,11 @@ class AsyncWriteQueueWorker:
                     if old_status == MonitorStatus.CONNECTED:
                         self._notify_user(
                             "Monitör Bağlantısı Kesildi",
-                            "DDC/CI uyumlu monitör bulunamadı. Kabloyu veya OSD menüsünü kontrol edin.",
+                            "DDC/CI uyumlu monitör bulunamadı.",
                             level="warning"
                         )
                     return False
 
-                # ViewSonic öncelikli hedef bulma
                 target = None
                 match_keyword = self.config.monitor_match.lower()
                 for d in devs:
@@ -149,18 +179,22 @@ class AsyncWriteQueueWorker:
                 self.active_index = target.index
                 self._current_brightness = target.current_brightness
                 self._target_brightness = target.current_brightness
+                self._current_volume = target.current_volume
+                self._target_volume = target.current_volume
+                self._current_input = target.current_input
                 self.status = MonitorStatus.CONNECTED
                 self.status_message = f"{target.description} bağlandı."
 
                 self._notify_brightness(self._current_brightness, from_hardware=True)
+                self._notify_volume(self._current_volume, self._is_muted)
+                self._notify_input(self._current_input, target.input_name)
                 self._notify_status(self.status, self.status_message)
                 self._notify_devices()
 
-                # Uykudan veya kopmadan geri geldiyse kullanıcıya bildir
                 if prev_status in (MonitorStatus.SLEEPING, MonitorStatus.DISCONNECTED, MonitorStatus.ERROR):
                     self._notify_user(
                         "Monitör Bağlandı",
-                        f"'{target.description}' DDC/CI üzerinden aktif. Parlaklık: %{self._current_brightness}",
+                        f"'{target.description}' DDC/CI üzerinden aktif.",
                         level="info"
                     )
 
@@ -173,7 +207,6 @@ class AsyncWriteQueueWorker:
                 return False
 
     def select_device(self, index: int):
-        """Aktif monitörü kullanıcı seçimine göre ayarlar."""
         with self._lock:
             for d in self.devices:
                 if d.index == index:
@@ -181,23 +214,24 @@ class AsyncWriteQueueWorker:
                     self.active_index = index
                     self._current_brightness = d.current_brightness
                     self._target_brightness = d.current_brightness
+                    self._current_volume = d.current_volume
+                    self._target_volume = d.current_volume
+                    self._current_input = d.current_input
                     self.status = MonitorStatus.CONNECTED
                     self.status_message = f"{d.description} seçildi."
                     self._notify_brightness(self._current_brightness, from_hardware=True)
+                    self._notify_volume(self._current_volume, self._is_muted)
+                    self._notify_input(self._current_input, d.input_name)
                     self._notify_status(self.status, self.status_message)
                     self._notify_devices()
                     return
 
-    # --- Parlaklık İstekleri ---
+    # --- Parlaklık Yönetimi ---
     def get_current_brightness(self) -> int:
         with self._lock:
             return self._target_brightness
 
     def set_brightness(self, value: int, immediate_ui: bool = True):
-        """
-        Kullanıcıdan gelen yeni parlaklık isteğini kuyruğa ekler.
-        Ana UI iş parçacığını ASLA bloklamaz.
-        """
         clamped = max(0, min(100, int(value)))
         with self._lock:
             self._target_brightness = clamped
@@ -206,13 +240,11 @@ class AsyncWriteQueueWorker:
             self._request_event.set()
 
     def change_brightness_by(self, delta: int):
-        """Mevcut parlaklığı adım kadar (örn. +5 veya -5) artırır/azaltır."""
         with self._lock:
             new_val = self._target_brightness + delta
         self.set_brightness(new_val, immediate_ui=True)
 
     def apply_profile(self, profile_name: str) -> bool:
-        """Kayıtlı profillerden birini uygular."""
         profiles = self.config.profiles
         if profile_name in profiles:
             val = profiles[profile_name]
@@ -220,7 +252,92 @@ class AsyncWriteQueueWorker:
             return True
         return False
 
-    # --- Asenkron Donanım Kuyruk Döngüsü (Coalescing + Debounce + Throttle) ---
+    # --- Ses Yönetimi (VCP 0x62) ---
+    def get_current_volume(self) -> int:
+        with self._lock:
+            return self._target_volume
+
+    def set_volume(self, value: int, immediate_ui: bool = True):
+        clamped = max(0, min(100, int(value)))
+        with self._lock:
+            self._target_volume = clamped
+            if immediate_ui:
+                self._notify_volume(clamped, self._is_muted)
+            self._request_event.set()
+
+    def change_volume_by(self, delta: int):
+        with self._lock:
+            new_val = self._target_volume + delta
+        self.set_volume(new_val, immediate_ui=True)
+
+    def toggle_mute(self) -> bool:
+        with self._lock:
+            self._is_muted = not self._is_muted
+            muted = self._is_muted
+            target_idx = self.active_index
+        try:
+            self.manager.set_mute(target_idx, muted)
+            self._notify_volume(self._target_volume, muted)
+            return muted
+        except Exception as e:
+            print(f"[!] Mute hatası: {e}")
+            return muted
+
+    # --- Giriş Kaynağı Yönetimi (VCP 0x60) ---
+    def get_current_input(self) -> int:
+        with self._lock:
+            return self._current_input
+
+    def set_input_source(self, source_code: int):
+        """Giriş kaynağını (DisplayPort 0x0F, HDMI 1 0x11, HDMI 2 0x12) ayarlar."""
+        with self._lock:
+            target_idx = self.active_index
+            self._current_input = source_code
+        try:
+            self.manager.set_input_source(target_idx, source_code)
+            input_name = INPUT_SOURCES.get(source_code, f"0x{source_code:02X}")
+            self._notify_input(source_code, input_name)
+            self._notify_user("Giriş Değiştirildi", f"Aktif Giriş: {input_name}", level="info")
+        except Exception as e:
+            print(f"[!] Giriş değiştirme hatası: {e}")
+
+    def cycle_input_source(self):
+        """Giriş kaynakları arasında sırayla döner (DP -> HDMI 1 -> HDMI 2 -> DP)."""
+        with self._lock:
+            cur = self._current_input
+            try:
+                idx = self.supported_inputs.index(cur)
+                next_input = self.supported_inputs[(idx + 1) % len(self.supported_inputs)]
+            except ValueError:
+                next_input = self.supported_inputs[0]
+        self.set_input_source(next_input)
+
+    # --- Güç / Uyku Yönetimi (VCP 0xD6) ---
+    def sleep_monitor(self):
+        """Monitörü bekleme (Standby 0x04) moduna alır."""
+        with self._lock:
+            target_idx = self.active_index
+        try:
+            self._notify_user("Monitör Uykuya Alınıyor", "Monitör Standby moduna geçiriliyor...", level="info")
+            self.manager.set_power_mode(target_idx, 0x04)
+            with self._lock:
+                self.status = MonitorStatus.SLEEPING
+                self.status_message = "Monitör uyku modunda."
+            self._notify_status(self.status, self.status_message)
+        except Exception as e:
+            print(f"[!] Uykuya alma hatası: {e}")
+
+    def wake_monitor(self):
+        """Monitörü uyandırır (On 0x01)."""
+        with self._lock:
+            target_idx = self.active_index
+        try:
+            self.manager.set_power_mode(target_idx, 0x01)
+            self.rescan_monitors()
+        except Exception as e:
+            print(f"[!] Uyandırma hatası: {e}")
+
+    # --- Asenkron Donanım Kuyruk Döngüsü (Parlaklık & Ses) ---
     def _hardware_worker_loop(self):
         while not self._stop_event.is_set():
             self._request_event.wait(timeout=0.2)
@@ -228,56 +345,67 @@ class AsyncWriteQueueWorker:
                 break
 
             with self._lock:
-                target = self._target_brightness
-                cur_hw = self._current_brightness
+                target_b = self._target_brightness
+                cur_b = self._current_brightness
+                target_v = self._target_volume
+                cur_v = self._current_volume
                 target_dev_idx = self.active_index
                 has_dev = self.active_device is not None
 
-            if not has_dev or target == cur_hw:
+            need_b = target_b != cur_b
+            need_v = target_v != cur_v
+
+            if not has_dev or (not need_b and not need_v):
                 self._request_event.clear()
                 continue
 
-            # 1. Debounce gecikmesi (80ms bekleyerek hızlı slider hareketlerinin ara değerlerini süz)
+            # 1. Debounce gecikmesi
             time.sleep(self.debounce_sec)
             with self._lock:
-                target = self._target_brightness
-                cur_hw = self._current_brightness
+                target_b = self._target_brightness
+                cur_b = self._current_brightness
+                target_v = self._target_volume
+                cur_v = self._current_volume
 
-            if target == cur_hw:
+            need_b = target_b != cur_b
+            need_v = target_v != cur_v
+
+            if not need_b and not need_v:
                 self._request_event.clear()
                 continue
 
-            # 2. Throttling kontrolü (İki fiziksel donanım yazımı arası en az throttle_sec bekle)
+            # 2. Throttling kontrolü
             elapsed = time.time() - self._last_write_timestamp
             if elapsed < self.throttle_sec:
                 time.sleep(self.throttle_sec - elapsed)
 
             # 3. Donanıma yazma
             try:
-                verified = self.manager.set_brightness(target_dev_idx, target)
+                if need_b:
+                    verified_b = self.manager.set_brightness(target_dev_idx, target_b)
+                    with self._lock:
+                        self._current_brightness = verified_b
+                    self._notify_brightness(verified_b, from_hardware=True)
+
+                if need_v:
+                    verified_v = self.manager.set_volume(target_dev_idx, target_v)
+                    with self._lock:
+                        self._current_volume = verified_v
+                    self._notify_volume(verified_v, self._is_muted)
+
                 self._last_write_timestamp = time.time()
 
                 with self._lock:
-                    self._current_brightness = verified
                     if self.status != MonitorStatus.CONNECTED:
                         self.status = MonitorStatus.CONNECTED
                         self.status_message = "Bağlantı aktif."
                         self._notify_status(self.status, self.status_message)
 
-                self._notify_brightness(verified, from_hardware=True)
-
-            except DDCCIDisconnectedError as e:
-                prev_status = self.status
+            except DDCCIDisconnectedError:
                 with self._lock:
                     self.status = MonitorStatus.SLEEPING
                     self.status_message = "Monitör uyku modunda veya bağlantı kesildi."
                 self._notify_status(self.status, self.status_message)
-                if prev_status == MonitorStatus.CONNECTED:
-                    self._notify_user(
-                        "DDC/CI İletişim Uyarısı",
-                        "Monitör uyku moduna geçti veya I2C yanıt vermedi.",
-                        level="warning"
-                    )
                 time.sleep(0.5)
 
             except DDCCIError as e:
@@ -296,7 +424,7 @@ class AsyncWriteQueueWorker:
 
             finally:
                 with self._lock:
-                    if self._target_brightness == self._current_brightness:
+                    if self._target_brightness == self._current_brightness and self._target_volume == self._current_volume:
                         self._request_event.clear()
 
     # --- Watchdog & Yeniden Bağlantı Döngüsü ---

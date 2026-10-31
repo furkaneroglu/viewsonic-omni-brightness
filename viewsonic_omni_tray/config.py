@@ -29,7 +29,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "profile_day": "<ctrl>+<alt>+1",
         "profile_night": "<ctrl>+<alt>+2",
         "profile_read": "<ctrl>+<alt>+3",
-        "profile_game": "<ctrl>+<alt>+4"
+        "profile_game": "<ctrl>+<alt>+4",
+        "volume_up": "<ctrl>+<alt>+<page_up>",
+        "volume_down": "<ctrl>+<alt>+<page_down>",
+        "volume_mute": "<ctrl>+<alt>+m",
+        "cycle_input": "<ctrl>+<alt>+i",
+        "sleep_monitor": "<ctrl>+<alt>+p"
     },
     "hardware": {
         "throttle_ms": 100,      # Donanım I2C yolunu korumak için iki yazma arası min ms

@@ -9,6 +9,13 @@ import sys
 import subprocess
 import shutil
 
+# Konsol UTF-8 ayarı
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 MAIN_SCRIPT = os.path.join(ROOT_DIR, "viewsonic_omni_tray", "main.py")
 ICON_FILE = os.path.join(ROOT_DIR, "viewsonic_omni_tray", "app_icon.ico")
@@ -16,7 +23,7 @@ EXE_NAME = "ViewSonic_OMNI_Brightness"
 
 def build():
     print("=" * 60)
-    print("🔨 ViewSonic OMNI - EXE Derleme Başlatılıyor...")
+    print("[*] ViewSonic OMNI - EXE Derleme Başlatılıyor...")
     print("=" * 60)
 
     cmd = [
@@ -36,7 +43,7 @@ def build():
 
     res = subprocess.run(cmd, cwd=ROOT_DIR)
     if res.returncode != 0:
-        print("\n❌ Hata: Derleme başarısız oldu!")
+        print("\n[-] Hata: Derleme başarısız oldu!")
         sys.exit(res.returncode)
 
     built_exe = os.path.join(ROOT_DIR, "dist", f"{EXE_NAME}.exe")
@@ -44,10 +51,9 @@ def build():
 
     if os.path.exists(built_exe):
         shutil.copy2(built_exe, final_exe)
-        print(f"\n✅ Başarılı! Bağımsız EXE oluşturuldu:\n   -> {final_exe}")
+        print(f"\n[+] Başarılı! Bağımsız EXE oluşturuldu:\n   -> {final_exe}")
 
-    # Geçici dosyaları temizle
-    print("🧹 Geçici derleme dosyaları temizleniyor...")
+    print("[*] Geçici derleme dosyaları temizleniyor...")
     for folder in ["build", "dist"]:
         p = os.path.join(ROOT_DIR, folder)
         if os.path.exists(p):
@@ -59,7 +65,7 @@ def build():
         except OSError:
             pass
 
-    print("✨ İşlem tamamlandı!")
+    print("[+] İşlem tamamlandı!")
 
 if __name__ == "__main__":
     build()

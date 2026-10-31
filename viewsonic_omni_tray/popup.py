@@ -1,15 +1,16 @@
 """
 ViewSonic OMNI DDC/CI Tray - Taskbar Slider & Presets Popup (Tray UI)
-Sistem tepsisi simgesine tıklandığında açılan modern, karanlık temalı hızlı kontrol paneli.
+Parlaklık, Ses, Giriş Kaynağı ve Uyku kontrollerini içeren modern koyu temalı hızlı kontrol paneli.
 """
 
 import tkinter as tk
 from typing import Optional, Callable
 from .config import ConfigManager
 from .queue_worker import AsyncWriteQueueWorker, MonitorStatus
+from .monitor_manager import INPUT_SOURCES
 
 class SliderPopup:
-    """Görev çubuğu üzerinde açılan hızlı parlaklık ve profil kontrol penceresi."""
+    """Görev çubuğu üzerinde açılan hızlı parlaklık, ses ve giriş kaynağı kontrol penceresi."""
 
     def __init__(self, root: tk.Tk, config: ConfigManager, worker: AsyncWriteQueueWorker, on_open_settings: Optional[Callable[[], None]] = None):
         self.root = root
@@ -17,8 +18,8 @@ class SliderPopup:
         self.worker = worker
         self.on_open_settings = on_open_settings
 
-        self.width = 360
-        self.height = 370
+        self.width = 370
+        self.height = 510
         self._window: Optional[tk.Toplevel] = None
         self._is_dragging = False
 
@@ -31,24 +32,22 @@ class SliderPopup:
         self._window.attributes("-topmost", True)
         self._window.configure(bg="#18181b")
 
-        # Odak kaybedildiğinde otomatik gizleme
         self._window.bind("<FocusOut>", self._on_focus_out)
         self._window.bind("<Escape>", lambda e: self.hide())
 
-        # Ana çerçeve (Kenarlıklı)
         main_frame = tk.Frame(
             self._window,
             bg="#18181b",
             highlightbackground="#3f3f46",
             highlightthickness=1,
             padx=16,
-            pady=14
+            pady=12
         )
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # 1. Başlık ve Durum Satırı
         header_frame = tk.Frame(main_frame, bg="#18181b")
-        header_frame.pack(fill=tk.X, pady=(0, 10))
+        header_frame.pack(fill=tk.X, pady=(0, 8))
 
         title_sub_frame = tk.Frame(header_frame, bg="#18181b")
         title_sub_frame.pack(side=tk.LEFT)
@@ -65,50 +64,47 @@ class SliderPopup:
         self.desc_lbl = tk.Label(
             title_sub_frame,
             text="VX2718-2KPC",
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 8),
             fg="#a1a1aa",
             bg="#18181b"
         )
         self.desc_lbl.pack(anchor="w")
 
-        # Durum rozeti (Pill)
         self.status_badge = tk.Label(
             header_frame,
             text="● Bağlı",
-            font=("Segoe UI", 9, "bold"),
-            fg="#10b981", # Emerald yeşil
+            font=("Segoe UI", 8, "bold"),
+            fg="#10b981",
             bg="#27272a",
             padx=8,
-            pady=3
+            pady=2
         )
         self.status_badge.pack(side=tk.RIGHT)
 
-        # Ayırıcı çizgi
         sep1 = tk.Frame(main_frame, height=1, bg="#27272a")
-        sep1.pack(fill=tk.X, pady=(4, 12))
+        sep1.pack(fill=tk.X, pady=(4, 8))
 
-        # 2. Parlaklık Değeri ve Slider
-        val_frame = tk.Frame(main_frame, bg="#18181b")
-        val_frame.pack(fill=tk.X, pady=(0, 4))
+        # 2. Parlaklık Slider'ı
+        b_frame = tk.Frame(main_frame, bg="#18181b")
+        b_frame.pack(fill=tk.X, pady=(0, 2))
 
         tk.Label(
-            val_frame,
-            text="Parlaklık",
-            font=("Segoe UI", 10, "bold"),
+            b_frame,
+            text="☀️ Ekran Parlaklığı",
+            font=("Segoe UI", 9, "bold"),
             fg="#e4e4e7",
             bg="#18181b"
         ).pack(side=tk.LEFT)
 
         self.brightness_text_lbl = tk.Label(
-            val_frame,
+            b_frame,
             text="%50",
-            font=("Segoe UI", 12, "bold"),
-            fg="#f59e0b", # Amber
+            font=("Segoe UI", 10, "bold"),
+            fg="#f59e0b",
             bg="#18181b"
         )
         self.brightness_text_lbl.pack(side=tk.RIGHT)
 
-        # Tkinter Scale Slider
         self.scale_var = tk.IntVar(value=50)
         self.scale = tk.Scale(
             main_frame,
@@ -123,47 +119,131 @@ class SliderPopup:
             highlightthickness=0,
             relief=tk.FLAT,
             sliderrelief=tk.FLAT,
-            length=320,
-            command=self._on_slider_moved
+            length=330,
+            command=self._on_brightness_moved
         )
-        self.scale.pack(fill=tk.X, pady=(4, 8))
+        self.scale.pack(fill=tk.X, pady=(2, 6))
 
-        # 3. Kademeli Değişim Butonları (-10%, -5%, +5%, +10%)
+        # Adım butonları (-10%, -5%, +5%, +10%)
         stepper_frame = tk.Frame(main_frame, bg="#18181b")
-        stepper_frame.pack(fill=tk.X, pady=(0, 12))
+        stepper_frame.pack(fill=tk.X, pady=(0, 8))
 
         for text, delta in [("-10%", -10), ("-5%", -5), ("+5%", +5), ("+10%", +10)]:
             btn = tk.Button(
                 stepper_frame,
                 text=text,
-                font=("Segoe UI", 8, "bold"),
+                font=("Segoe UI", 8),
                 fg="#d4d4d8",
                 bg="#27272a",
                 activebackground="#3f3f46",
-                activeforeground="#ffffff",
                 relief=tk.FLAT,
                 bd=0,
-                padx=8,
-                pady=4,
-                command=lambda d=delta: self._on_step(d)
+                pady=2,
+                command=lambda d=delta: self._on_b_step(d)
             )
-            btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+            btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
-        # Ayırıcı çizgi
+        # 3. Ses Seviyesi Slider'ı (VCP 0x62)
+        v_frame = tk.Frame(main_frame, bg="#18181b")
+        v_frame.pack(fill=tk.X, pady=(4, 2))
+
+        tk.Label(
+            v_frame,
+            text="🔊 Monitör Hoparlör Sesi",
+            font=("Segoe UI", 9, "bold"),
+            fg="#e4e4e7",
+            bg="#18181b"
+        ).pack(side=tk.LEFT)
+
+        self.volume_text_lbl = tk.Label(
+            v_frame,
+            text="%50",
+            font=("Segoe UI", 10, "bold"),
+            fg="#06b6d4", # Camgöbeği
+            bg="#18181b"
+        )
+        self.volume_text_lbl.pack(side=tk.RIGHT)
+
+        vol_row = tk.Frame(main_frame, bg="#18181b")
+        vol_row.pack(fill=tk.X, pady=(2, 6))
+
+        self.vol_scale_var = tk.IntVar(value=50)
+        self.vol_scale = tk.Scale(
+            vol_row,
+            from_=0,
+            to=100,
+            orient=tk.HORIZONTAL,
+            variable=self.vol_scale_var,
+            showvalue=False,
+            bg="#27272a",
+            troughcolor="#18181b",
+            activebackground="#06b6d4",
+            highlightthickness=0,
+            relief=tk.FLAT,
+            sliderrelief=tk.FLAT,
+            length=260,
+            command=self._on_volume_moved
+        )
+        self.vol_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+
+        self.mute_btn = tk.Button(
+            vol_row,
+            text="Mute",
+            font=("Segoe UI", 8, "bold"),
+            fg="#f4f4f5",
+            bg="#27272a",
+            activebackground="#ef4444",
+            relief=tk.FLAT,
+            bd=0,
+            padx=8,
+            pady=3,
+            command=self._on_mute_clicked
+        )
+        self.mute_btn.pack(side=tk.RIGHT)
+
         sep2 = tk.Frame(main_frame, height=1, bg="#27272a")
-        sep2.pack(fill=tk.X, pady=(0, 10))
+        sep2.pack(fill=tk.X, pady=(4, 8))
 
-        # 4. Hızlı Profiller Bölümü
+        # 4. Giriş Kaynağı Değiştirici (VCP 0x60)
         tk.Label(
             main_frame,
-            text="Ön Tanımlı Profiller",
+            text="🔌 Giriş Kaynağı (Input Switcher)",
             font=("Segoe UI", 9, "bold"),
             fg="#a1a1aa",
             bg="#18181b"
-        ).pack(anchor="w", pady=(0, 6))
+        ).pack(anchor="w", pady=(0, 4))
+
+        input_frame = tk.Frame(main_frame, bg="#18181b")
+        input_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.input_buttons = {}
+        for code, name in INPUT_SOURCES.items():
+            btn = tk.Button(
+                input_frame,
+                text=name,
+                font=("Segoe UI", 8),
+                fg="#d4d4d8",
+                bg="#27272a",
+                activebackground="#10b981",
+                relief=tk.FLAT,
+                bd=0,
+                pady=5,
+                command=lambda c=code: self._on_input_selected(c)
+            )
+            btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+            self.input_buttons[code] = btn
+
+        # 5. Ön Tanımlı Profiller
+        tk.Label(
+            main_frame,
+            text="📋 Hızlı Profiller",
+            font=("Segoe UI", 9, "bold"),
+            fg="#a1a1aa",
+            bg="#18181b"
+        ).pack(anchor="w", pady=(0, 4))
 
         presets_frame = tk.Frame(main_frame, bg="#18181b")
-        presets_frame.pack(fill=tk.X, pady=(0, 14))
+        presets_frame.pack(fill=tk.X, pady=(0, 10))
 
         profiles = [
             ("☀️ Gündüz (%80)", "Gündüz"),
@@ -173,9 +253,9 @@ class SliderPopup:
         ]
 
         row1 = tk.Frame(presets_frame, bg="#18181b")
-        row1.pack(fill=tk.X, pady=2)
+        row1.pack(fill=tk.X, pady=1)
         row2 = tk.Frame(presets_frame, bg="#18181b")
-        row2.pack(fill=tk.X, pady=2)
+        row2.pack(fill=tk.X, pady=1)
 
         for i, (label_txt, prof_name) in enumerate(profiles):
             target_row = row1 if i < 2 else row2
@@ -189,14 +269,14 @@ class SliderPopup:
                 activeforeground="#18181b",
                 relief=tk.FLAT,
                 bd=0,
-                pady=6,
+                pady=4,
                 command=lambda p=prof_name: self._on_profile_click(p)
             )
-            btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+            btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
-        # 5. Alt Bar: Ayarlar ve Kapat
+        # 6. Alt Çubuk (Ayarlar, Uyku Modu ve Kapat)
         bottom_frame = tk.Frame(main_frame, bg="#18181b")
-        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(4, 0))
 
         settings_btn = tk.Button(
             bottom_frame,
@@ -205,12 +285,26 @@ class SliderPopup:
             fg="#a1a1aa",
             bg="#18181b",
             activebackground="#27272a",
-            activeforeground="#ffffff",
             relief=tk.FLAT,
             bd=0,
             command=self._on_settings_click
         )
         settings_btn.pack(side=tk.LEFT)
+
+        sleep_btn = tk.Button(
+            bottom_frame,
+            text="🌙 Monitörü Uykuya Al",
+            font=("Segoe UI", 8),
+            fg="#f59e0b",
+            bg="#27272a",
+            activebackground="#3f3f46",
+            relief=tk.FLAT,
+            bd=0,
+            padx=8,
+            pady=3,
+            command=self._on_sleep_click
+        )
+        sleep_btn.pack(side=tk.LEFT, padx=6)
 
         close_btn = tk.Button(
             bottom_frame,
@@ -219,24 +313,43 @@ class SliderPopup:
             fg="#a1a1aa",
             bg="#18181b",
             activebackground="#27272a",
-            activeforeground="#ffffff",
             relief=tk.FLAT,
             bd=0,
             command=self.hide
         )
         close_btn.pack(side=tk.RIGHT)
 
-    def _on_slider_moved(self, val_str: str):
+    def _on_brightness_moved(self, val_str: str):
         val = int(val_str)
         self.brightness_text_lbl.config(text=f"%{val}")
         self.worker.set_brightness(val, immediate_ui=False)
 
-    def _on_step(self, delta: int):
+    def _on_volume_moved(self, val_str: str):
+        val = int(val_str)
+        self.volume_text_lbl.config(text=f"%{val}")
+        self.worker.set_volume(val, immediate_ui=False)
+
+    def _on_b_step(self, delta: int):
         cur = self.scale_var.get()
         new_val = max(0, min(100, cur + delta))
         self.scale_var.set(new_val)
         self.brightness_text_lbl.config(text=f"%{new_val}")
         self.worker.set_brightness(new_val, immediate_ui=True)
+
+    def _on_mute_clicked(self):
+        muted = self.worker.toggle_mute()
+        self.mute_btn.config(
+            text="Unmute" if muted else "Mute",
+            bg="#ef4444" if muted else "#27272a"
+        )
+
+    def _on_input_selected(self, source_code: int):
+        self.worker.set_input_source(source_code)
+        self._highlight_active_input(source_code)
+
+    def _on_sleep_click(self):
+        self.hide()
+        self.worker.sleep_monitor()
 
     def _on_profile_click(self, profile_name: str):
         self.worker.apply_profile(profile_name)
@@ -249,10 +362,28 @@ class SliderPopup:
         if self.on_open_settings:
             self.on_open_settings()
 
-    def update_values(self, brightness: int, status: MonitorStatus, active_desc: Optional[str] = None):
-        """Dışarıdan gelen güncellemelerle popup arayüzünü tazeler."""
+    def _highlight_active_input(self, active_code: int):
+        for code, btn in self.input_buttons.items():
+            if code == active_code:
+                btn.config(bg="#10b981", fg="#ffffff", font=("Segoe UI", 8, "bold"))
+            else:
+                btn.config(bg="#27272a", fg="#d4d4d8", font=("Segoe UI", 8))
+
+    def update_values(
+        self,
+        brightness: int,
+        volume: int,
+        input_code: int,
+        status: MonitorStatus,
+        active_desc: Optional[str] = None
+    ):
         self.scale_var.set(brightness)
         self.brightness_text_lbl.config(text=f"%{brightness}")
+
+        self.vol_scale_var.set(volume)
+        self.volume_text_lbl.config(text=f"%{volume}")
+
+        self._highlight_active_input(input_code)
 
         if active_desc:
             self.desc_lbl.config(text=active_desc)
@@ -275,8 +406,11 @@ class SliderPopup:
             self._create_window()
 
         cur_b = self.worker.get_current_brightness()
-        desc = self.worker.active_device.description if self.worker.active_device else "Bilinmeyen Monitör"
-        self.update_values(cur_b, self.worker.status, desc)
+        cur_v = self.worker.get_current_volume()
+        cur_i = self.worker.get_current_input()
+        desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
+
+        self.update_values(cur_b, cur_v, cur_i, self.worker.status, desc)
 
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()

@@ -1,6 +1,7 @@
 """
 ViewSonic OMNI DDC/CI Tray - Main Application Coordinator
 Tekil örnek (Single Instance) denetimi, Tkinter ana döngüsü ve tüm modüllerin koordinasyonu.
+Parlaklık, Ses, Giriş Kaynağı ve Güç kontrollerini birbirine bağlar.
 """
 
 import sys
@@ -22,9 +23,8 @@ from .tray import TrayApp
 MUTEX_NAME = "Global\\ViewSonicOmniTray_SingleInstance_Mutex_App"
 
 def set_dpi_awareness():
-    """Windows 10/11 için yüksek DPI farkındalığını etkinleştirir (Piksellerin net görünmesi için)."""
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2) # Per-Monitor DPI Aware
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
         try:
             ctypes.windll.user32.SetProcessDPIAware()
@@ -33,8 +33,6 @@ def set_dpi_awareness():
 
 
 class SingleInstanceLock:
-    """Aynı anda birden fazla tray uygulamasının çalışmasını önleyen Win32 Mutex koruyucusu."""
-
     def __init__(self, name: str = MUTEX_NAME):
         self.name = name
         self.mutex = None
@@ -62,7 +60,6 @@ class ViewSonicOmniApp:
     def __init__(self):
         set_dpi_awareness()
 
-        # Tekil örnek denetimi
         self.lock = SingleInstanceLock()
         if not self.lock.acquire():
             print("[!] ViewSonic OMNI Tray uygulaması zaten arka planda çalışıyor.")
@@ -73,7 +70,7 @@ class ViewSonicOmniApp:
         self.monitor_manager = MonitorManager()
         self.worker = AsyncWriteQueueWorker(self.config, self.monitor_manager)
 
-        # 2. Tkinter Kök Penceresi (Arka planda gizli)
+        # 2. Tkinter Kök Penceresi
         self.root = tk.Tk()
         self.root.withdraw()
 
@@ -114,13 +111,14 @@ class ViewSonicOmniApp:
             tray_icon_provider=lambda: self.tray.icon
         )
 
-        # 7. Dinleyicilerin Bağlanması (Thread-Safe köprüler)
+        # 7. Dinleyicilerin Bağlanması
         self.worker.add_brightness_listener(self._on_worker_brightness)
+        self.worker.add_volume_listener(self._on_worker_volume)
+        self.worker.add_input_listener(self._on_worker_input)
         self.worker.add_status_listener(self._on_worker_status)
         self.worker.add_notification_listener(self._on_worker_notification)
 
     def run(self):
-        """Tüm servisleri başlatır ve Tkinter olay döngüsünü çalıştırır."""
         self.worker.start()
         self.hotkeys.start()
         self.tray.start()
@@ -131,7 +129,6 @@ class ViewSonicOmniApp:
             self.cleanup()
 
     def quit(self):
-        """Uygulamayı güvenli bir şekilde kapatır."""
         self.root.after(0, self._do_quit)
 
     def _do_quit(self):
@@ -140,7 +137,6 @@ class ViewSonicOmniApp:
         sys.exit(0)
 
     def cleanup(self):
-        """Tüm kaynakları, iş parçacıklarını ve kilitleri serbest bırakır."""
         try:
             self.hotkeys.stop()
             self.tray.stop()
@@ -159,22 +155,38 @@ class ViewSonicOmniApp:
     def open_settings(self):
         self.settings_window.show()
 
-    def _on_hotkey_triggered(self, action_name: str, new_val: int):
+    def _on_hotkey_triggered(self, action_name: str, new_val: int, hud_type: str = "brightness", is_muted: bool = False):
         desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
-        self.root.after(0, lambda: self.osd.show(desc, new_val, action_name))
+        self.root.after(0, lambda: self.osd.show(desc, new_val, action_name, hud_type, is_muted))
 
     def _on_worker_brightness(self, value: int, from_hardware: bool):
         def _update():
             desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
-            self.popup.update_values(value, self.worker.status, desc)
+            self.popup.update_values(value, self.worker.get_current_volume(), self.worker.get_current_input(), self.worker.status, desc)
             self.tray.update_icon_and_title(value, self.worker.status)
+        self.root.after(0, _update)
+
+    def _on_worker_volume(self, value: int, is_muted: bool):
+        def _update():
+            desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
+            self.popup.update_values(self.worker.get_current_brightness(), value, self.worker.get_current_input(), self.worker.status, desc)
+            self.tray.update_icon_and_title(self.worker.get_current_brightness(), self.worker.status)
+        self.root.after(0, _update)
+
+    def _on_worker_input(self, input_code: int, input_name: str):
+        def _update():
+            desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
+            self.popup.update_values(self.worker.get_current_brightness(), self.worker.get_current_volume(), input_code, self.worker.status, desc)
+            self.tray.update_icon_and_title(self.worker.get_current_brightness(), self.worker.status)
         self.root.after(0, _update)
 
     def _on_worker_status(self, status: MonitorStatus, message: str):
         def _update():
             cur_b = self.worker.get_current_brightness()
+            cur_v = self.worker.get_current_volume()
+            cur_i = self.worker.get_current_input()
             desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
-            self.popup.update_values(cur_b, status, desc)
+            self.popup.update_values(cur_b, cur_v, cur_i, status, desc)
             self.tray.update_icon_and_title(cur_b, status)
         self.root.after(0, _update)
 
