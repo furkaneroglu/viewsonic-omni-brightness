@@ -10,6 +10,18 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
+# UTF-8 konsol ayarı (Windows CI/CD cp1252 uyumluluğu için)
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if repo_dir not in sys.path:
     sys.path.insert(0, repo_dir)
@@ -51,13 +63,13 @@ class TestMonitorManager(unittest.TestCase):
         manager = MonitorManager()
         monitors = manager.enumerate_monitors()
         self.assertIsInstance(monitors, list)
-        print(f"\n[Test] Bulunan fiziksel monitör sayısı: {len(monitors)}")
+        print(f"\n[Test] Bulunan fiziksel monitor sayisi: {len(monitors)}")
         if monitors:
             m = monitors[0]
-            print(f"[Test] Monitör: {m.description}, Parlaklık: {m.current_brightness}")
-            print(f"[Test] VCP Luminance Desteği: {m.supports_luminance}")
+            print(f"[Test] Monitor: {m.description}, Parlaklik: {m.current_brightness}")
+            print(f"[Test] VCP Luminance Destegi: {m.supports_luminance}")
             if m.capabilities_string:
-                print(f"[Test] Capabilities (özet): {m.capabilities_string[:60]}...")
+                print(f"[Test] Capabilities (ozet): {m.capabilities_string[:60]}...")
             self.assertTrue(m.min_brightness <= m.current_brightness <= m.max_brightness)
             self.assertTrue(m.supports_luminance)
 
@@ -93,7 +105,7 @@ class TestRateLimitingAndAsyncQueue(unittest.TestCase):
             # Worker'ın işlemi tamamlamasını bekle
             time.sleep(0.25)
 
-            print(f"\n[Test] 5 hızlı slider hareketinde donanıma giden yazma sayısı: {len(hardware_writes)}")
+            print(f"\n[Test] 5 hizli slider hareketinde donanima giden yazma sayisi: {len(hardware_writes)}")
             # Coalescing / Debounce sayesinde ara değerlerin (10, 20, 30, 40) elenip
             # donanıma yalnızca son hedef değer olan 80'in gitmiş olması gerekir!
             self.assertLessEqual(len(hardware_writes), 2)
@@ -108,7 +120,7 @@ class TestRateLimitingAndAsyncQueue(unittest.TestCase):
                 t1 = hardware_writes[-2][0]
                 t2 = hardware_writes[-1][0]
                 diff = t2 - t1
-                print(f"[Test] İki donanım yazımı arası geçen süre: {diff*1000:.1f} ms (Min beklenen: {worker.throttle_sec*1000:.1f} ms)")
+                print(f"[Test] Iki donanim yazimi arasi gecen sure: {diff*1000:.1f} ms (Min beklenen: {worker.throttle_sec*1000:.1f} ms)")
                 self.assertGreaterEqual(diff, worker.throttle_sec - 0.02)
 
         finally:
