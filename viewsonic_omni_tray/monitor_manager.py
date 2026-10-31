@@ -36,6 +36,67 @@ POWER_MODES = {
     0x05: "Kapalı / Askıya Al (Suspend)"
 }
 
+# VESA MCCS Renk Sıcaklığı ve Ton Ön Ayarları (VCP 0x14)
+COLOR_PRESETS = {
+    0x01: "sRGB",
+    0x02: "Doğal (Display Native)",
+    0x04: "5000K (Sıcak)",
+    0x05: "6500K (Standart / Canlı)",
+    0x06: "7500K",
+    0x08: "9300K (Soğuk)",
+    0x0B: "Kullanıcı (User Color)"
+}
+
+# Ekran Modları (ViewMode Presets)
+# Her mod donanım seviyesinde Parlaklık (0x10), Kontrast (0x12) ve Renk Sıcaklığı (0x14) değerlerini koordine eder.
+DISPLAY_MODES = {
+    "Standart": {
+        "id": "Standart",
+        "name": "Standart Mod",
+        "icon": "🌐",
+        "brightness": 70,
+        "contrast": 70,
+        "color_preset": 0x02,  # Doğal / Native
+        "desc": "Doğal renk dengesi ve dengeli günlük kullanım"
+    },
+    "Oyun": {
+        "id": "Oyun",
+        "name": "Oyun Modu",
+        "icon": "🎮",
+        "brightness": 90,
+        "contrast": 75,
+        "color_preset": 0x05,  # 6500K Canlı
+        "desc": "Yüksek parlaklık, dinamik kontrast ve canlı renkler"
+    },
+    "Film": {
+        "id": "Film",
+        "name": "Film / Sinema",
+        "icon": "🎬",
+        "brightness": 70,
+        "contrast": 80,
+        "color_preset": 0x04,  # 5000K Sıcak
+        "desc": "Sinematik sıcak tonlar, derin siyahlar ve yüksek kontrast"
+    },
+    "Metin": {
+        "id": "Metin",
+        "name": "Metin / Okuma",
+        "icon": "📖",
+        "brightness": 35,
+        "contrast": 50,
+        "color_preset": 0x01,  # sRGB / Düşük mavi ışık
+        "desc": "Göz yormayan yumuşak tonlar ve düşük kontrast"
+    },
+    "Gece": {
+        "id": "Gece",
+        "name": "Gece / Kodlama",
+        "icon": "🌙",
+        "brightness": 15,
+        "contrast": 55,
+        "color_preset": 0x04,  # Sıcak ton
+        "desc": "Karanlık ortamlar için minimum göz yorgunluğu"
+    }
+}
+
 class DDCCIError(Exception):
     """DDC/CI genel donanım hatası."""
     def __init__(self, message: str, code: Optional[int] = None):
@@ -70,6 +131,9 @@ class MonitorDevice:
         max_brightness: int = 100,
         current_volume: int = 50,
         current_input: int = 0x12,
+        current_contrast: int = 70,
+        current_color_preset: int = 0x05,
+        current_mode: str = "Standart",
         capabilities_string: str = ""
     ):
         self.index = index
@@ -80,6 +144,9 @@ class MonitorDevice:
         self.max_brightness = max_brightness
         self.current_volume = current_volume
         self.current_input = current_input
+        self.current_contrast = current_contrast
+        self.current_color_preset = current_color_preset
+        self.current_mode = current_mode
         self.capabilities_string = capabilities_string
         desc_lower = description.lower()
         self.is_viewsonic = "viewsonic" in desc_lower or "vx2718" in desc_lower or "omni" in desc_lower
@@ -89,6 +156,10 @@ class MonitorDevice:
         return INPUT_SOURCES.get(self.current_input, f"Giriş (0x{self.current_input:02X})")
 
     @property
+    def color_preset_name(self) -> str:
+        return COLOR_PRESETS.get(self.current_color_preset, f"0x{self.current_color_preset:02X}")
+
+    @property
     def supports_luminance(self) -> bool:
         if not self.capabilities_string:
             return True
@@ -96,7 +167,7 @@ class MonitorDevice:
         return "10" in caps or "luminance" in caps
 
     def __repr__(self):
-        return f"<MonitorDevice #{self.index}: '{self.description}' (%{self.current_brightness}, Ses: %{self.current_volume}, Giriş: {self.input_name})>"
+        return f"<MonitorDevice #{self.index}: '{self.description}' (%{self.current_brightness}, Kontrast: %{self.current_contrast}, Mod: {self.current_mode}, Ses: %{self.current_volume}, Giriş: {self.input_name})>"
 
 
 class MonitorManager:
@@ -298,6 +369,18 @@ class MonitorManager:
                         if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x60, ctypes.byref(pvct), ctypes.byref(cur_inp), ctypes.byref(mx_inp)):
                             inp_val = cur_inp.value
 
+                        # Kontrast okuma (0x12)
+                        cur_cnt, mx_cnt = wintypes.DWORD(), wintypes.DWORD()
+                        cnt_val = 70
+                        if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x12, ctypes.byref(pvct), ctypes.byref(cur_cnt), ctypes.byref(mx_cnt)):
+                            cnt_val = cur_cnt.value
+
+                        # Renk Preset okuma (0x14)
+                        cur_cp, mx_cp = wintypes.DWORD(), wintypes.DWORD()
+                        cp_val = 0x05
+                        if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x14, ctypes.byref(pvct), ctypes.byref(cur_cp), ctypes.byref(mx_cp)):
+                            cp_val = cur_cp.value
+
                         dev = MonitorDevice(
                             index=global_idx,
                             hmonitor=hmon,
@@ -307,6 +390,9 @@ class MonitorManager:
                             max_brightness=max_b.value,
                             current_volume=vol_val,
                             current_input=inp_val,
+                            current_contrast=cnt_val,
+                            current_color_preset=cp_val,
+                            current_mode="Standart",
                             capabilities_string=caps
                         )
                         devices.append(dev)
@@ -404,5 +490,80 @@ class MonitorManager:
                 err = ctypes.GetLastError()
                 raise DDCCIError(f"Güç modu ayarlanamadı: {self._format_win32_error(err)}", code=err)
             return True
+
+        return self._execute_on_handle(target_index, _action)
+
+    # --- Kontrast (Contrast VCP 0x12) ---
+    def set_contrast(self, target_index: int, value: int) -> int:
+        value = max(0, min(100, int(value)))
+
+        def _action(handle, desc):
+            if not self.dxva2.SetVCPFeature(handle, 0x12, wintypes.DWORD(value)):
+                err = ctypes.GetLastError()
+                raise DDCCIError(f"Kontrast ayarlanamadı: {self._format_win32_error(err)}", code=err)
+            pvct, cur_cnt, mx = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
+            self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x12, ctypes.byref(pvct), ctypes.byref(cur_cnt), ctypes.byref(mx))
+            return cur_cnt.value
+
+        return self._execute_on_handle(target_index, _action)
+
+    def get_contrast(self, target_index: int) -> int:
+        def _action(handle, desc):
+            pvct, cur_cnt, mx = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
+            if not self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x12, ctypes.byref(pvct), ctypes.byref(cur_cnt), ctypes.byref(mx)):
+                err = ctypes.GetLastError()
+                raise DDCCIDisconnectedError(f"Kontrast okunamadı: {self._format_win32_error(err)}", code=err)
+            return cur_cnt.value
+
+        return self._execute_on_handle(target_index, _action)
+
+    # --- Renk Preset / Sıcaklık (Color Preset VCP 0x14) ---
+    def set_color_preset(self, target_index: int, preset_code: int) -> int:
+        def _action(handle, desc):
+            if not self.dxva2.SetVCPFeature(handle, 0x14, wintypes.DWORD(preset_code)):
+                err = ctypes.GetLastError()
+                raise DDCCIError(f"Renk modu ayarlanamadı: {self._format_win32_error(err)}", code=err)
+            return preset_code
+
+        return self._execute_on_handle(target_index, _action)
+
+    def get_color_preset(self, target_index: int) -> int:
+        def _action(handle, desc):
+            pvct, cur_cp, mx = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
+            if not self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x14, ctypes.byref(pvct), ctypes.byref(cur_cp), ctypes.byref(mx)):
+                err = ctypes.GetLastError()
+                raise DDCCIDisconnectedError(f"Renk modu okunamadı: {self._format_win32_error(err)}", code=err)
+            return cur_cp.value
+
+        return self._execute_on_handle(target_index, _action)
+
+    # --- Ekran Modları (ViewMode Presets) ---
+    def apply_display_mode(self, target_index: int, mode_name: str) -> dict:
+        """
+        Belirtilen ekran modunu (Oyun, Film, Metin, Standart, Gece) donanım üzerinde uygular.
+        Parlaklık (0x10), Kontrast (0x12) ve Renk Ön Ayarını (0x14) koordine eder.
+        """
+        if mode_name not in DISPLAY_MODES:
+            raise ValueError(f"Bilinmeyen ekran modu: {mode_name}. Geçerli modlar: {list(DISPLAY_MODES.keys())}")
+
+        mode_data = DISPLAY_MODES[mode_name]
+
+        def _action(handle, desc):
+            # 1. Renk Modu (0x14)
+            cp = mode_data.get("color_preset")
+            if cp:
+                self.dxva2.SetVCPFeature(handle, 0x14, wintypes.DWORD(cp))
+
+            # 2. Kontrast (0x12)
+            cnt = mode_data.get("contrast")
+            if cnt is not None:
+                self.dxva2.SetVCPFeature(handle, 0x12, wintypes.DWORD(cnt))
+
+            # 3. Parlaklık (0x10)
+            br = mode_data.get("brightness")
+            if br is not None:
+                self.dxva2.SetMonitorBrightness(handle, wintypes.DWORD(br))
+
+            return mode_data
 
         return self._execute_on_handle(target_index, _action)

@@ -100,6 +100,17 @@ class OSDOverlay:
             fill_ratio = 1.0
             bar_color = "#10b981" # Yeşil
 
+        elif hud_type == "mode":
+            self.title_label.config(text="ViewSonic OMNI - Ekran Modu")
+            self.value_label.config(text=action_title or f"Mod: {value}")
+            fill_ratio = 1.0
+            bar_color = "#8b5cf6" # Mor / Violet
+
+        elif hud_type == "contrast":
+            self.value_label.config(text=f"🌓  Kontrast: %{value}")
+            fill_ratio = max(0.0, min(1.0, value / 100.0))
+            bar_color = "#3b82f6" # Mavi
+
         elif hud_type == "sleep":
             self.value_label.config(text="🌙  Monitör Uyku Moduna Alındı")
             fill_ratio = 0.0

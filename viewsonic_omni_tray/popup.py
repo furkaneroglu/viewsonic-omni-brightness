@@ -1,16 +1,16 @@
 """
 ViewSonic OMNI DDC/CI Tray - Taskbar Slider & Presets Popup (Tray UI)
-Parlaklık, Ses, Giriş Kaynağı ve Uyku kontrollerini içeren modern koyu temalı hızlı kontrol paneli.
+Parlaklık, Kontrast, Ekran Modları (ViewMode), Ses, Giriş Kaynağı ve Uyku kontrollerini içeren modern koyu temalı hızlı kontrol paneli.
 """
 
 import tkinter as tk
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict
 from .config import ConfigManager
 from .queue_worker import AsyncWriteQueueWorker, MonitorStatus
-from .monitor_manager import INPUT_SOURCES
+from .monitor_manager import INPUT_SOURCES, DISPLAY_MODES
 
 class SliderPopup:
-    """Görev çubuğu üzerinde açılan hızlı parlaklık, ses ve giriş kaynağı kontrol penceresi."""
+    """Görev çubuğu üzerinde açılan hızlı parlaklık, kontrast, ekran modu ve ses kontrol penceresi."""
 
     def __init__(self, root: tk.Tk, config: ConfigManager, worker: AsyncWriteQueueWorker, on_open_settings: Optional[Callable[[], None]] = None):
         self.root = root
@@ -18,10 +18,11 @@ class SliderPopup:
         self.worker = worker
         self.on_open_settings = on_open_settings
 
-        self.width = 370
-        self.height = 510
+        self.width = 380
+        self.height = 570
         self._window: Optional[tk.Toplevel] = None
-        self._is_dragging = False
+        self._mode_buttons: Dict[str, tk.Button] = {}
+        self.input_buttons: Dict[int, tk.Button] = {}
 
         self._create_window()
 
@@ -47,7 +48,7 @@ class SliderPopup:
 
         # 1. Başlık ve Durum Satırı
         header_frame = tk.Frame(main_frame, bg="#18181b")
-        header_frame.pack(fill=tk.X, pady=(0, 8))
+        header_frame.pack(fill=tk.X, pady=(0, 6))
 
         title_sub_frame = tk.Frame(header_frame, bg="#18181b")
         title_sub_frame.pack(side=tk.LEFT)
@@ -82,9 +83,59 @@ class SliderPopup:
         self.status_badge.pack(side=tk.RIGHT)
 
         sep1 = tk.Frame(main_frame, height=1, bg="#27272a")
-        sep1.pack(fill=tk.X, pady=(4, 8))
+        sep1.pack(fill=tk.X, pady=(4, 6))
 
-        # 2. Parlaklık Slider'ı
+        # 2. Ekran Modları (ViewMode) - 1-Tık Ön Ayarlar
+        mode_header = tk.Frame(main_frame, bg="#18181b")
+        mode_header.pack(fill=tk.X, pady=(0, 4))
+
+        tk.Label(
+            mode_header,
+            text="📺 Ekran Modları (ViewMode)",
+            font=("Segoe UI", 9, "bold"),
+            fg="#e4e4e7",
+            bg="#18181b"
+        ).pack(side=tk.LEFT)
+
+        self.active_mode_lbl = tk.Label(
+            mode_header,
+            text="Standart",
+            font=("Segoe UI", 8, "bold"),
+            fg="#8b5cf6",
+            bg="#18181b"
+        )
+        self.active_mode_lbl.pack(side=tk.RIGHT)
+
+        mode_btn_frame = tk.Frame(main_frame, bg="#18181b")
+        mode_btn_frame.pack(fill=tk.X, pady=(0, 8))
+
+        modes_list = [
+            ("Oyun", "🎮 Oyun"),
+            ("Film", "🎬 Film"),
+            ("Metin", "📖 Metin"),
+            ("Standart", "🌐 Standart"),
+            ("Gece", "🌙 Gece")
+        ]
+
+        self._mode_buttons = {}
+        for mode_key, btn_label in modes_list:
+            btn = tk.Button(
+                mode_btn_frame,
+                text=btn_label,
+                font=("Segoe UI", 8),
+                fg="#f4f4f5",
+                bg="#27272a",
+                activebackground="#8b5cf6",
+                activeforeground="#ffffff",
+                relief=tk.FLAT,
+                bd=0,
+                pady=5,
+                command=lambda m=mode_key: self._on_mode_click(m)
+            )
+            btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+            self._mode_buttons[mode_key] = btn
+
+        # 3. Parlaklık Slider'ı (VCP 0x10)
         b_frame = tk.Frame(main_frame, bg="#18181b")
         b_frame.pack(fill=tk.X, pady=(0, 2))
 
@@ -119,14 +170,14 @@ class SliderPopup:
             highlightthickness=0,
             relief=tk.FLAT,
             sliderrelief=tk.FLAT,
-            length=330,
+            length=340,
             command=self._on_brightness_moved
         )
-        self.scale.pack(fill=tk.X, pady=(2, 6))
+        self.scale.pack(fill=tk.X, pady=(2, 4))
 
         # Adım butonları (-10%, -5%, +5%, +10%)
         stepper_frame = tk.Frame(main_frame, bg="#18181b")
-        stepper_frame.pack(fill=tk.X, pady=(0, 8))
+        stepper_frame.pack(fill=tk.X, pady=(0, 6))
 
         for text, delta in [("-10%", -10), ("-5%", -5), ("+5%", +5), ("+10%", +10)]:
             btn = tk.Button(
@@ -143,9 +194,52 @@ class SliderPopup:
             )
             btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
-        # 3. Ses Seviyesi Slider'ı (VCP 0x62)
+        # 4. Kontrast Slider'ı (VCP 0x12)
+        c_frame = tk.Frame(main_frame, bg="#18181b")
+        c_frame.pack(fill=tk.X, pady=(2, 2))
+
+        tk.Label(
+            c_frame,
+            text="🌓 Ekran Kontrastı",
+            font=("Segoe UI", 9, "bold"),
+            fg="#e4e4e7",
+            bg="#18181b"
+        ).pack(side=tk.LEFT)
+
+        self.contrast_text_lbl = tk.Label(
+            c_frame,
+            text="%70",
+            font=("Segoe UI", 10, "bold"),
+            fg="#3b82f6",
+            bg="#18181b"
+        )
+        self.contrast_text_lbl.pack(side=tk.RIGHT)
+
+        self.contrast_scale_var = tk.IntVar(value=70)
+        self.contrast_scale = tk.Scale(
+            main_frame,
+            from_=0,
+            to=100,
+            orient=tk.HORIZONTAL,
+            variable=self.contrast_scale_var,
+            showvalue=False,
+            bg="#27272a",
+            troughcolor="#18181b",
+            activebackground="#3b82f6",
+            highlightthickness=0,
+            relief=tk.FLAT,
+            sliderrelief=tk.FLAT,
+            length=340,
+            command=self._on_contrast_moved
+        )
+        self.contrast_scale.pack(fill=tk.X, pady=(2, 6))
+
+        sep2 = tk.Frame(main_frame, height=1, bg="#27272a")
+        sep2.pack(fill=tk.X, pady=(2, 6))
+
+        # 5. Ses Seviyesi Slider'ı (VCP 0x62)
         v_frame = tk.Frame(main_frame, bg="#18181b")
-        v_frame.pack(fill=tk.X, pady=(4, 2))
+        v_frame.pack(fill=tk.X, pady=(2, 2))
 
         tk.Label(
             v_frame,
@@ -159,7 +253,7 @@ class SliderPopup:
             v_frame,
             text="%50",
             font=("Segoe UI", 10, "bold"),
-            fg="#06b6d4", # Camgöbeği
+            fg="#06b6d4",
             bg="#18181b"
         )
         self.volume_text_lbl.pack(side=tk.RIGHT)
@@ -181,7 +275,7 @@ class SliderPopup:
             highlightthickness=0,
             relief=tk.FLAT,
             sliderrelief=tk.FLAT,
-            length=260,
+            length=270,
             command=self._on_volume_moved
         )
         self.vol_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
@@ -201,10 +295,10 @@ class SliderPopup:
         )
         self.mute_btn.pack(side=tk.RIGHT)
 
-        sep2 = tk.Frame(main_frame, height=1, bg="#27272a")
-        sep2.pack(fill=tk.X, pady=(4, 8))
+        sep3 = tk.Frame(main_frame, height=1, bg="#27272a")
+        sep3.pack(fill=tk.X, pady=(2, 6))
 
-        # 4. Giriş Kaynağı Değiştirici (VCP 0x60)
+        # 6. Giriş Kaynağı Değiştirici (VCP 0x60)
         tk.Label(
             main_frame,
             text="🔌 Giriş Kaynağı (Input Switcher)",
@@ -214,7 +308,7 @@ class SliderPopup:
         ).pack(anchor="w", pady=(0, 4))
 
         input_frame = tk.Frame(main_frame, bg="#18181b")
-        input_frame.pack(fill=tk.X, pady=(0, 10))
+        input_frame.pack(fill=tk.X, pady=(0, 8))
 
         self.input_buttons = {}
         for code, name in INPUT_SOURCES.items():
@@ -227,54 +321,13 @@ class SliderPopup:
                 activebackground="#10b981",
                 relief=tk.FLAT,
                 bd=0,
-                pady=5,
+                pady=4,
                 command=lambda c=code: self._on_input_selected(c)
             )
             btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
             self.input_buttons[code] = btn
 
-        # 5. Ön Tanımlı Profiller
-        tk.Label(
-            main_frame,
-            text="📋 Hızlı Profiller",
-            font=("Segoe UI", 9, "bold"),
-            fg="#a1a1aa",
-            bg="#18181b"
-        ).pack(anchor="w", pady=(0, 4))
-
-        presets_frame = tk.Frame(main_frame, bg="#18181b")
-        presets_frame.pack(fill=tk.X, pady=(0, 10))
-
-        profiles = [
-            ("☀️ Gündüz (%80)", "Gündüz"),
-            ("🌙 Gece (%20)", "Gece"),
-            ("📖 Okuma (%40)", "Okuma"),
-            ("🎮 Oyun (%90)", "Oyun"),
-        ]
-
-        row1 = tk.Frame(presets_frame, bg="#18181b")
-        row1.pack(fill=tk.X, pady=1)
-        row2 = tk.Frame(presets_frame, bg="#18181b")
-        row2.pack(fill=tk.X, pady=1)
-
-        for i, (label_txt, prof_name) in enumerate(profiles):
-            target_row = row1 if i < 2 else row2
-            btn = tk.Button(
-                target_row,
-                text=label_txt,
-                font=("Segoe UI", 8),
-                fg="#f4f4f5",
-                bg="#27272a",
-                activebackground="#f59e0b",
-                activeforeground="#18181b",
-                relief=tk.FLAT,
-                bd=0,
-                pady=4,
-                command=lambda p=prof_name: self._on_profile_click(p)
-            )
-            btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
-
-        # 6. Alt Çubuk (Ayarlar, Uyku Modu ve Kapat)
+        # 7. Alt Çubuk (Ayarlar, Uyku Modu ve Kapat)
         bottom_frame = tk.Frame(main_frame, bg="#18181b")
         bottom_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(4, 0))
 
@@ -324,6 +377,11 @@ class SliderPopup:
         self.brightness_text_lbl.config(text=f"%{val}")
         self.worker.set_brightness(val, immediate_ui=False)
 
+    def _on_contrast_moved(self, val_str: str):
+        val = int(val_str)
+        self.contrast_text_lbl.config(text=f"%{val}")
+        self.worker.set_contrast(val, immediate_ui=False)
+
     def _on_volume_moved(self, val_str: str):
         val = int(val_str)
         self.volume_text_lbl.config(text=f"%{val}")
@@ -343,6 +401,10 @@ class SliderPopup:
             bg="#ef4444" if muted else "#27272a"
         )
 
+    def _on_mode_click(self, mode_key: str):
+        self.worker.apply_display_mode(mode_key)
+        self._highlight_active_mode(mode_key)
+
     def _on_input_selected(self, source_code: int):
         self.worker.set_input_source(source_code)
         self._highlight_active_input(source_code)
@@ -351,16 +413,18 @@ class SliderPopup:
         self.hide()
         self.worker.sleep_monitor()
 
-    def _on_profile_click(self, profile_name: str):
-        self.worker.apply_profile(profile_name)
-        new_val = self.worker.get_current_brightness()
-        self.scale_var.set(new_val)
-        self.brightness_text_lbl.config(text=f"%{new_val}")
-
     def _on_settings_click(self):
         self.hide()
         if self.on_open_settings:
             self.on_open_settings()
+
+    def _highlight_active_mode(self, active_mode: str):
+        self.active_mode_lbl.config(text=active_mode)
+        for mode_key, btn in self._mode_buttons.items():
+            if mode_key == active_mode:
+                btn.config(bg="#8b5cf6", fg="#ffffff", font=("Segoe UI", 8, "bold"))
+            else:
+                btn.config(bg="#27272a", fg="#f4f4f5", font=("Segoe UI", 8))
 
     def _highlight_active_input(self, active_code: int):
         for code, btn in self.input_buttons.items():
@@ -372,17 +436,23 @@ class SliderPopup:
     def update_values(
         self,
         brightness: int,
+        contrast: int,
         volume: int,
         input_code: int,
         status: MonitorStatus,
+        active_mode: str = "Standart",
         active_desc: Optional[str] = None
     ):
         self.scale_var.set(brightness)
         self.brightness_text_lbl.config(text=f"%{brightness}")
 
+        self.contrast_scale_var.set(contrast)
+        self.contrast_text_lbl.config(text=f"%{contrast}")
+
         self.vol_scale_var.set(volume)
         self.volume_text_lbl.config(text=f"%{volume}")
 
+        self._highlight_active_mode(active_mode)
         self._highlight_active_input(input_code)
 
         if active_desc:
@@ -406,11 +476,13 @@ class SliderPopup:
             self._create_window()
 
         cur_b = self.worker.get_current_brightness()
+        cur_c = self.worker.get_current_contrast()
         cur_v = self.worker.get_current_volume()
         cur_i = self.worker.get_current_input()
+        cur_m = self.worker.get_current_mode()
         desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
 
-        self.update_values(cur_b, cur_v, cur_i, self.worker.status, desc)
+        self.update_values(cur_b, cur_c, cur_v, cur_i, self.worker.status, cur_m, desc)
 
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()

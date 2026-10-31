@@ -24,7 +24,9 @@ You don't need Python or any developer tools!
 
 ## 🌟 Key Features
 
-* **🎛️ System Tray & Quick Control Panel:** Click the golden sun icon in the notification area to open a sleek dark-themed popup with live sliders for **Brightness** and **Monitor Speaker Volume**, stepper buttons, one-click input buttons (**DisplayPort, HDMI 1, HDMI 2**), and quick profile buttons.
+* **📺 ViewMode & Screen Mode Presets (VCP 0x14, 0x10, 0x12):** Switch between **Oyun (Gaming)**, **Film (Movie)**, **Metin (Text/Reading)**, **Standart**, and **Gece (Night)** with 1-click preset buttons or `Ctrl + Alt + V`. No more navigating clunky physical monitor buttons!
+* **🌓 Hardware Contrast Adjustment (VCP 0x12):** Fine-tune hardware contrast directly from the popup slider or via `Ctrl + Alt + → / ←`.
+* **🎛️ System Tray & Quick Control Panel:** Click the golden sun icon in the notification area to open a sleek dark-themed popup with live sliders for **Brightness**, **Contrast**, and **Monitor Speaker Volume**, stepper buttons, **Ekran Modları (ViewMode)**, one-click input buttons (**DisplayPort, HDMI 1, HDMI 2**), and sleep button.
 * **🔌 Instant Input Switching (VCP 0x60):** Switch between your PC, Console (PS5/Xbox), and Laptop across DisplayPort, HDMI 1, and HDMI 2 with a single hotkey (`Ctrl + Alt + I`) or via the tray menu.
 * **🔊 Monitor Audio Volume Control (VCP 0x62 & 0x8D):** Adjust or mute your monitor's internal speakers / 3.5mm headphone jack directly from Windows.
 * **🌙 Sleep / Standby Mode (VCP 0xD6):** Instantly put your monitor into energy-saving Standby mode (`Ctrl + Alt + P`) without touching the power button.
@@ -43,6 +45,10 @@ You don't need Python or any developer tools!
 | :--- | :--- | :--- |
 | `Ctrl + Alt + ↑` | **Brightness Up** | Increases brightness by 5% (configurable) |
 | `Ctrl + Alt + ↓` | **Brightness Down** | Decreases brightness by 5% (configurable) |
+| `Ctrl + Alt + →` | **Contrast Up** | Increases hardware contrast by 5% |
+| `Ctrl + Alt + ←` | **Contrast Down** | Decreases hardware contrast by 5% |
+| `Ctrl + Alt + V` | **Cycle Screen Mode** | Cycles through **Standart ➔ Oyun ➔ Film ➔ Metin ➔ Gece** |
+| `Ctrl + Alt + G` | **Game Mode** | Instantly activates **Oyun Modu** (90% Brightness, 75% Contrast, Vivid) |
 | `Ctrl + Alt + 1` | **Day Profile** | Sets brightness directly to **80%** |
 | `Ctrl + Alt + 2` | **Night Profile** | Sets brightness directly to **20%** |
 | `Ctrl + Alt + 3` | **Reading Profile** | Sets brightness directly to **40%** |
@@ -132,10 +138,11 @@ This generates `ViewSonic_OMNI_Brightness.exe` in the root folder.
 
 ## 🇹🇷 Türkçe Özet
 
-ViewSonic OMNI serisi monitörlerin parlaklığını DDC/CI protokolü üzerinden yöneten, sistem tepsisinde (saat yanında) arka planda sessizce çalışan ve klavye kısayolları ile kontrol edilebilen hafif masaüstü uygulamasıdır.
+ViewSonic OMNI serisi (ve diğer DDC/CI uyumlu) monitörlerin parlaklık, kontrast, ekran modları (Oyun, Film, Metin/Okuma), ses ve giriş kaynağını DDC/CI protokolü üzerinden yöneten, sistem tepsisinde (saat yanında) arka planda sessizce çalışan ve klavye kısayolları ile kontrol edilebilen hafif masaüstü uygulamasıdır.
 
+* **Fiziksel Tuşlara Son:** Monitörün arkasındaki sert tuşlara dokunmadan **Oyun**, **Film**, **Metin** veya **Standart** modlarına tek tıkla (`Ctrl+Alt+V`) geçebilirsiniz.
 * **Hazır EXE Kullanımı:** [Releases](../../releases) sayfasından `ViewSonic_OMNI_Brightness.exe` dosyasını indirip çift tıklamanız yeterlidir (Python kurulumu gerektirmez).
-* **Kısayollar:** `Ctrl+Alt+Yukarı/Aşağı` ile parlaklığı 5'er 5'er değiştirin, `Ctrl+Alt+1..4` ile profiller arasında geçiş yapın. Ekranda şık bir OSD göstergesi belirir.
+* **Kısayollar:** `Ctrl+Alt+Yukarı/Aşağı` ile parlaklığı, `Ctrl+Alt+Sağ/Sol` ile kontrastı değiştirin. `Ctrl+Alt+V` ile ekran modları arasında geçiş yapın. Ekranda şık bir OSD göstergesi belirir.
 * **Donanım Koruması:** Hızlı slider hareketlerinde I2C yolu kilitlenmez (80ms debounce & 100ms throttle).
 
 ---

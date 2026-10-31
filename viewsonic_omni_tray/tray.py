@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 import pystray
 from .config import ConfigManager
 from .queue_worker import AsyncWriteQueueWorker, MonitorStatus
-from .monitor_manager import INPUT_SOURCES
+from .monitor_manager import INPUT_SOURCES, DISPLAY_MODES
 
 
 def create_tray_image(brightness: int = 50, status: MonitorStatus = MonitorStatus.CONNECTED) -> Image.Image:
@@ -103,8 +103,10 @@ class TrayApp:
         desc = self.worker.active_device.description if self.worker.active_device else "Monitör"
         status_str = status.value
         vol = self.worker.get_current_volume()
+        cnt = self.worker.get_current_contrast()
+        mode = self.worker.get_current_mode()
         inp_name = INPUT_SOURCES.get(self.worker.get_current_input(), "HDMI")
-        title_text = f"ViewSonic OMNI ({desc})\nParlaklık: %{brightness} | Ses: %{vol} | Giriş: {inp_name} [{status_str}]"
+        title_text = f"ViewSonic OMNI ({desc})\nMod: {mode} | P: %{brightness} | K: %{cnt} | S: %{vol} | Giriş: {inp_name} [{status_str}]"
 
         try:
             self.icon.title = title_text
@@ -115,13 +117,15 @@ class TrayApp:
 
     def _build_menu(self) -> pystray.Menu:
         cur_b = self.worker.get_current_brightness()
+        cur_c = self.worker.get_current_contrast()
         cur_v = self.worker.get_current_volume()
         cur_i = self.worker.get_current_input()
+        cur_m = self.worker.get_current_mode()
         status = self.worker.status
         desc = self.worker.active_device.description if self.worker.active_device else "Algılanamadı"
 
         if status == MonitorStatus.CONNECTED:
-            status_tag = f"🟢 {desc} (P:%{cur_b} | S:%{cur_v})"
+            status_tag = f"🟢 {desc} ({cur_m} | P:%{cur_b} | K:%{cur_c} | S:%{cur_v})"
         elif status == MonitorStatus.SLEEPING:
             status_tag = f"🟡 {desc} (Uykuda)"
         else:
@@ -130,16 +134,30 @@ class TrayApp:
         def make_brightness_action(val: int):
             return lambda icon, item: self.worker.set_brightness(val)
 
+        def make_contrast_action(val: int):
+            return lambda icon, item: self.worker.set_contrast(val)
+
         def make_volume_action(val: int):
             return lambda icon, item: self.worker.set_volume(val)
 
         def make_input_action(code: int):
             return lambda icon, item: self.worker.set_input_source(code)
 
+        def make_mode_action(mode_name: str):
+            return lambda icon, item: self.worker.apply_display_mode(mode_name)
+
         def make_profile_action(prof_name: str):
             return lambda icon, item: self.worker.apply_profile(prof_name)
 
-        # 1. Hızlı Parlaklık
+        # 1. Ekran Modları (ViewMode)
+        mode_items = []
+        for mode_key, mode_info in DISPLAY_MODES.items():
+            is_active = (mode_key == cur_m)
+            prefix = "● " if is_active else "  "
+            label = f"{prefix}{mode_info['icon']} {mode_info['name']} (%{mode_info['brightness']} P / %{mode_info['contrast']} K)"
+            mode_items.append(pystray.MenuItem(label, make_mode_action(mode_key)))
+
+        # 2. Hızlı Parlaklık
         quick_brightness = [
             pystray.MenuItem("%10", make_brightness_action(10)),
             pystray.MenuItem("%25", make_brightness_action(25)),
@@ -148,7 +166,16 @@ class TrayApp:
             pystray.MenuItem("%100", make_brightness_action(100)),
         ]
 
-        # 2. Hızlı Ses Seviyesi
+        # 3. Hızlı Kontrast
+        quick_contrast = [
+            pystray.MenuItem("%40", make_contrast_action(40)),
+            pystray.MenuItem("%50", make_contrast_action(50)),
+            pystray.MenuItem("%60", make_contrast_action(60)),
+            pystray.MenuItem("%70", make_contrast_action(70)),
+            pystray.MenuItem("%80", make_contrast_action(80)),
+        ]
+
+        # 4. Hızlı Ses Seviyesi
         quick_volume = [
             pystray.MenuItem("%20", make_volume_action(20)),
             pystray.MenuItem("%40", make_volume_action(40)),
@@ -159,7 +186,7 @@ class TrayApp:
             pystray.MenuItem("Sessiz (Mute / Unmute)", lambda icon, item: self.worker.toggle_mute()),
         ]
 
-        # 3. Giriş Kaynağı Seçimi (DisplayPort, HDMI 1, HDMI 2)
+        # 5. Giriş Kaynağı Seçimi (DisplayPort, HDMI 1, HDMI 2)
         input_items = []
         for code, name in INPUT_SOURCES.items():
             is_active = (code == cur_i)
@@ -168,7 +195,7 @@ class TrayApp:
                 pystray.MenuItem(tag, make_input_action(code))
             )
 
-        # 4. Profiller
+        # 6. Profiller
         profile_items = []
         for name, val in self.config.profiles.items():
             profile_items.append(
@@ -185,9 +212,14 @@ class TrayApp:
 
             # Hızlı Açılır Panel
             pystray.MenuItem("🎛️  Kontrol Panelini Aç", lambda icon, item: self.on_open_popup(), default=True),
+            pystray.Menu.SEPARATOR,
+
+            # Ekran Modları (ViewMode)
+            pystray.MenuItem("📺 Ekran Modları (ViewMode)", pystray.Menu(*mode_items)),
 
             # Alt Menüler
             pystray.MenuItem("☀️ Parlaklık", pystray.Menu(*quick_brightness)),
+            pystray.MenuItem("🌓 Kontrast", pystray.Menu(*quick_contrast)),
             pystray.MenuItem("🔊 Monitör Sesi", pystray.Menu(*quick_volume)),
             pystray.MenuItem("🔌 Giriş Kaynağı", pystray.Menu(*input_items)),
             pystray.MenuItem("📋 Profiller", pystray.Menu(*profile_items)),

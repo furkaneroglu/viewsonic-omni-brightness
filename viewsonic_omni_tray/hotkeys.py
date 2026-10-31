@@ -60,7 +60,21 @@ class HotkeyService:
             if hotkeys.get("brightness_down"):
                 hotkey_mapping[hotkeys["brightness_down"]] = lambda: self._on_change_brightness(-step, "Parlaklık Azalt")
 
-            # 2. Profiller (1..4)
+            # 2. Kontrast Artır / Azalt
+            if hotkeys.get("contrast_up"):
+                hotkey_mapping[hotkeys["contrast_up"]] = lambda: self._on_change_contrast(step, "Kontrast Artır")
+
+            if hotkeys.get("contrast_down"):
+                hotkey_mapping[hotkeys["contrast_down"]] = lambda: self._on_change_contrast(-step, "Kontrast Azalt")
+
+            # 3. Ekran Modları (ViewMode) Döngüsü ve Hızlı Oyun Modu
+            if hotkeys.get("cycle_mode"):
+                hotkey_mapping[hotkeys["cycle_mode"]] = lambda: self._on_cycle_mode()
+
+            if hotkeys.get("mode_game"):
+                hotkey_mapping[hotkeys["mode_game"]] = lambda: self._on_apply_mode("Oyun")
+
+            # 4. Profiller (1..4)
             if hotkeys.get("profile_day"):
                 hotkey_mapping[hotkeys["profile_day"]] = lambda: self._on_apply_profile("Gündüz")
 
@@ -73,7 +87,7 @@ class HotkeyService:
             if hotkeys.get("profile_game"):
                 hotkey_mapping[hotkeys["profile_game"]] = lambda: self._on_apply_profile("Oyun")
 
-            # 3. Ses Seviyesi Artır / Azalt / Mute
+            # 5. Ses Seviyesi Artır / Azalt / Mute
             if hotkeys.get("volume_up"):
                 hotkey_mapping[hotkeys["volume_up"]] = lambda: self._on_change_volume(step, "Ses Artır")
 
@@ -83,11 +97,11 @@ class HotkeyService:
             if hotkeys.get("volume_mute"):
                 hotkey_mapping[hotkeys["volume_mute"]] = lambda: self._on_toggle_mute()
 
-            # 4. Giriş Kaynağı Döngüsü (Cycle Input)
+            # 6. Giriş Kaynağı Döngüsü (Cycle Input)
             if hotkeys.get("cycle_input"):
                 hotkey_mapping[hotkeys["cycle_input"]] = lambda: self._on_cycle_input()
 
-            # 5. Monitörü Uyku Moduna Al
+            # 7. Monitörü Uyku Moduna Al
             if hotkeys.get("sleep_monitor"):
                 hotkey_mapping[hotkeys["sleep_monitor"]] = lambda: self._on_sleep_monitor()
 
@@ -103,6 +117,34 @@ class HotkeyService:
         new_val = self.worker.get_current_brightness()
         if self.on_hotkey_triggered:
             self.on_hotkey_triggered(action_name, new_val, "brightness", False)
+
+    def _on_change_contrast(self, delta: int, action_name: str):
+        self.worker.change_contrast_by(delta)
+        new_val = self.worker.get_current_contrast()
+        if self.on_hotkey_triggered:
+            self.on_hotkey_triggered(action_name, new_val, "contrast", False)
+
+    def _on_cycle_mode(self):
+        new_mode = self.worker.cycle_display_mode()
+        from .monitor_manager import DISPLAY_MODES
+        mode_info = DISPLAY_MODES.get(new_mode, {})
+        if self.on_hotkey_triggered:
+            icon = mode_info.get("icon", "📺")
+            name = mode_info.get("name", new_mode)
+            br = mode_info.get("brightness", 70)
+            cnt = mode_info.get("contrast", 70)
+            self.on_hotkey_triggered(f"{icon} {name} (%{br} P / %{cnt} K)", br, "mode", False)
+
+    def _on_apply_mode(self, mode_name: str):
+        self.worker.apply_display_mode(mode_name)
+        from .monitor_manager import DISPLAY_MODES
+        mode_info = DISPLAY_MODES.get(mode_name, {})
+        if self.on_hotkey_triggered:
+            icon = mode_info.get("icon", "📺")
+            name = mode_info.get("name", mode_name)
+            br = mode_info.get("brightness", 70)
+            cnt = mode_info.get("contrast", 70)
+            self.on_hotkey_triggered(f"{icon} {name} (%{br} P / %{cnt} K)", br, "mode", False)
 
     def _on_apply_profile(self, profile_name: str):
         success = self.worker.apply_profile(profile_name)

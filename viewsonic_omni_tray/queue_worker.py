@@ -8,7 +8,7 @@ import time
 import threading
 from enum import Enum
 from typing import List, Optional, Callable, Dict, Any
-from .monitor_manager import MonitorManager, MonitorDevice, INPUT_SOURCES, POWER_MODES, DDCCIError, DDCCIDisconnectedError
+from .monitor_manager import MonitorManager, MonitorDevice, INPUT_SOURCES, POWER_MODES, COLOR_PRESETS, DISPLAY_MODES, DDCCIError, DDCCIDisconnectedError
 from .config import ConfigManager
 
 class MonitorStatus(Enum):
@@ -39,6 +39,15 @@ class AsyncWriteQueueWorker:
         self._current_brightness: int = 50
         self._target_brightness: int = 50
 
+        # Kontrast Durumu (VCP 0x12)
+        self._current_contrast: int = 70
+        self._target_contrast: int = 70
+
+        # Renk ve Ekran Modu Durumu (VCP 0x14 ve ViewMode Presets)
+        self._current_color_preset: int = 0x05
+        self._current_mode: str = "Standart"
+        self.supported_modes: List[str] = list(DISPLAY_MODES.keys())
+
         # Ses Durumu (VCP 0x62) & Mute (0x8D)
         self._current_volume: int = 50
         self._target_volume: int = 50
@@ -62,6 +71,8 @@ class AsyncWriteQueueWorker:
 
         # UI ve Bildirim dinleyicileri
         self._brightness_listeners: List[Callable[[int, bool], None]] = []
+        self._contrast_listeners: List[Callable[[int, bool], None]] = []
+        self._mode_listeners: List[Callable[[str, dict], None]] = []
         self._volume_listeners: List[Callable[[int, bool], None]] = []
         self._input_listeners: List[Callable[[int, str], None]] = []
         self._status_listeners: List[Callable[[MonitorStatus, str], None]] = []
@@ -85,6 +96,12 @@ class AsyncWriteQueueWorker:
     def add_brightness_listener(self, cb: Callable[[int, bool], None]):
         self._brightness_listeners.append(cb)
 
+    def add_contrast_listener(self, cb: Callable[[int, bool], None]):
+        self._contrast_listeners.append(cb)
+
+    def add_mode_listener(self, cb: Callable[[str, dict], None]):
+        self._mode_listeners.append(cb)
+
     def add_volume_listener(self, cb: Callable[[int, bool], None]):
         self._volume_listeners.append(cb)
 
@@ -106,6 +123,20 @@ class AsyncWriteQueueWorker:
                 cb(value, from_hardware)
             except Exception as e:
                 print(f"[!] Brightness callback error: {e}")
+
+    def _notify_contrast(self, value: int, from_hardware: bool = False):
+        for cb in list(self._contrast_listeners):
+            try:
+                cb(value, from_hardware)
+            except Exception as e:
+                print(f"[!] Contrast callback error: {e}")
+
+    def _notify_mode(self, mode_name: str, mode_data: dict):
+        for cb in list(self._mode_listeners):
+            try:
+                cb(mode_name, mode_data)
+            except Exception as e:
+                print(f"[!] Mode callback error: {e}")
 
     def _notify_volume(self, value: int, is_muted: bool = False):
         for cb in list(self._volume_listeners):
@@ -179,6 +210,10 @@ class AsyncWriteQueueWorker:
                 self.active_index = target.index
                 self._current_brightness = target.current_brightness
                 self._target_brightness = target.current_brightness
+                self._current_contrast = target.current_contrast
+                self._target_contrast = target.current_contrast
+                self._current_color_preset = target.current_color_preset
+                self._current_mode = target.current_mode
                 self._current_volume = target.current_volume
                 self._target_volume = target.current_volume
                 self._current_input = target.current_input
@@ -186,6 +221,8 @@ class AsyncWriteQueueWorker:
                 self.status_message = f"{target.description} bağlandı."
 
                 self._notify_brightness(self._current_brightness, from_hardware=True)
+                self._notify_contrast(self._current_contrast, from_hardware=True)
+                self._notify_mode(self._current_mode, DISPLAY_MODES.get(self._current_mode, {}))
                 self._notify_volume(self._current_volume, self._is_muted)
                 self._notify_input(self._current_input, target.input_name)
                 self._notify_status(self.status, self.status_message)
@@ -214,12 +251,18 @@ class AsyncWriteQueueWorker:
                     self.active_index = index
                     self._current_brightness = d.current_brightness
                     self._target_brightness = d.current_brightness
+                    self._current_contrast = d.current_contrast
+                    self._target_contrast = d.current_contrast
+                    self._current_color_preset = d.current_color_preset
+                    self._current_mode = d.current_mode
                     self._current_volume = d.current_volume
                     self._target_volume = d.current_volume
                     self._current_input = d.current_input
                     self.status = MonitorStatus.CONNECTED
                     self.status_message = f"{d.description} seçildi."
                     self._notify_brightness(self._current_brightness, from_hardware=True)
+                    self._notify_contrast(self._current_contrast, from_hardware=True)
+                    self._notify_mode(self._current_mode, DISPLAY_MODES.get(self._current_mode, {}))
                     self._notify_volume(self._current_volume, self._is_muted)
                     self._notify_input(self._current_input, d.input_name)
                     self._notify_status(self.status, self.status_message)
@@ -251,6 +294,79 @@ class AsyncWriteQueueWorker:
             self.set_brightness(val, immediate_ui=True)
             return True
         return False
+
+    # --- Ekran Modları (ViewMode Presets) ---
+    def get_current_mode(self) -> str:
+        with self._lock:
+            return self._current_mode
+
+    def apply_display_mode(self, mode_name: str) -> bool:
+        """
+        Ekran modunu (Oyun, Film, Metin, Standart, Gece) uygular.
+        Monitörün Parlaklık, Kontrast ve Renk Sıcaklığı donanım ayarlarını anında koordine eder.
+        """
+        if mode_name not in DISPLAY_MODES:
+            return False
+
+        mode_data = DISPLAY_MODES[mode_name]
+        with self._lock:
+            self._current_mode = mode_name
+            target_idx = self.active_index
+            target_b = mode_data["brightness"]
+            target_c = mode_data["contrast"]
+            target_cp = mode_data["color_preset"]
+
+            self._target_brightness = target_b
+            self._current_brightness = target_b
+            self._target_contrast = target_c
+            self._current_contrast = target_c
+            self._current_color_preset = target_cp
+
+        try:
+            self.manager.apply_display_mode(target_idx, mode_name)
+            self._notify_brightness(target_b, from_hardware=True)
+            self._notify_contrast(target_c, from_hardware=True)
+            self._notify_mode(mode_name, mode_data)
+            self._notify_user(
+                f"{mode_data['icon']} {mode_data['name']} Aktif",
+                f"Parlaklık: %{target_b} | Kontrast: %{target_c} ({mode_data['desc']})",
+                level="info"
+            )
+            return True
+        except Exception as e:
+            print(f"[!] Ekran modu uygulama hatası: {e}")
+            return False
+
+    def cycle_display_mode(self) -> str:
+        """Ekran modları arasında sırayla döner (Standart -> Oyun -> Film -> Metin -> Gece -> Standart)."""
+        modes = list(DISPLAY_MODES.keys())
+        with self._lock:
+            cur = self._current_mode
+            try:
+                idx = modes.index(cur)
+                next_mode = modes[(idx + 1) % len(modes)]
+            except ValueError:
+                next_mode = modes[0]
+        self.apply_display_mode(next_mode)
+        return next_mode
+
+    # --- Kontrast Yönetimi (VCP 0x12) ---
+    def get_current_contrast(self) -> int:
+        with self._lock:
+            return self._target_contrast
+
+    def set_contrast(self, value: int, immediate_ui: bool = True):
+        clamped = max(0, min(100, int(value)))
+        with self._lock:
+            self._target_contrast = clamped
+            if immediate_ui:
+                self._notify_contrast(clamped, from_hardware=False)
+            self._request_event.set()
+
+    def change_contrast_by(self, delta: int):
+        with self._lock:
+            new_val = self._target_contrast + delta
+        self.set_contrast(new_val, immediate_ui=True)
 
     # --- Ses Yönetimi (VCP 0x62) ---
     def get_current_volume(self) -> int:
@@ -347,15 +463,18 @@ class AsyncWriteQueueWorker:
             with self._lock:
                 target_b = self._target_brightness
                 cur_b = self._current_brightness
+                target_c = self._target_contrast
+                cur_c = self._current_contrast
                 target_v = self._target_volume
                 cur_v = self._current_volume
                 target_dev_idx = self.active_index
                 has_dev = self.active_device is not None
 
             need_b = target_b != cur_b
+            need_c = target_c != cur_c
             need_v = target_v != cur_v
 
-            if not has_dev or (not need_b and not need_v):
+            if not has_dev or (not need_b and not need_c and not need_v):
                 self._request_event.clear()
                 continue
 
@@ -364,13 +483,16 @@ class AsyncWriteQueueWorker:
             with self._lock:
                 target_b = self._target_brightness
                 cur_b = self._current_brightness
+                target_c = self._target_contrast
+                cur_c = self._current_contrast
                 target_v = self._target_volume
                 cur_v = self._current_volume
 
             need_b = target_b != cur_b
+            need_c = target_c != cur_c
             need_v = target_v != cur_v
 
-            if not need_b and not need_v:
+            if not need_b and not need_c and not need_v:
                 self._request_event.clear()
                 continue
 
@@ -386,6 +508,12 @@ class AsyncWriteQueueWorker:
                     with self._lock:
                         self._current_brightness = verified_b
                     self._notify_brightness(verified_b, from_hardware=True)
+
+                if need_c:
+                    verified_c = self.manager.set_contrast(target_dev_idx, target_c)
+                    with self._lock:
+                        self._current_contrast = verified_c
+                    self._notify_contrast(verified_c, from_hardware=True)
 
                 if need_v:
                     verified_v = self.manager.set_volume(target_dev_idx, target_v)
@@ -424,7 +552,9 @@ class AsyncWriteQueueWorker:
 
             finally:
                 with self._lock:
-                    if self._target_brightness == self._current_brightness and self._target_volume == self._current_volume:
+                    if (self._target_brightness == self._current_brightness and 
+                        self._target_contrast == self._current_contrast and
+                        self._target_volume == self._current_volume):
                         self._request_event.clear()
 
     # --- Watchdog & Yeniden Bağlantı Döngüsü ---

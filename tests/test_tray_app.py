@@ -10,9 +10,9 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if base_dir not in sys.path:
-    sys.path.insert(0, base_dir)
+repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if repo_dir not in sys.path:
+    sys.path.insert(0, repo_dir)
 
 from viewsonic_omni_tray.config import ConfigManager, DEFAULT_CONFIG
 from viewsonic_omni_tray.monitor_manager import MonitorManager, MonitorDevice, DDCCIDisconnectedError, DDCCIError
@@ -165,6 +165,40 @@ class TestSingleInstanceLock(unittest.TestCase):
 
         lock1.release()
         lock2.release()
+
+
+class TestDisplayModes(unittest.TestCase):
+    """Ekran Modları (ViewMode) ve Kontrast Testleri"""
+
+    def test_display_modes_definition(self):
+        from viewsonic_omni_tray.monitor_manager import DISPLAY_MODES
+        for required_mode in ["Oyun", "Film", "Metin", "Standart", "Gece"]:
+            self.assertIn(required_mode, DISPLAY_MODES)
+            data = DISPLAY_MODES[required_mode]
+            self.assertIn("brightness", data)
+            self.assertIn("contrast", data)
+            self.assertIn("color_preset", data)
+            self.assertTrue(0 <= data["brightness"] <= 100)
+            self.assertTrue(0 <= data["contrast"] <= 100)
+
+    def test_cycle_display_modes(self):
+        from viewsonic_omni_tray.config import ConfigManager
+        from viewsonic_omni_tray.queue_worker import AsyncWriteQueueWorker
+        cfg = ConfigManager()
+        worker = AsyncWriteQueueWorker(cfg)
+        worker.manager = MagicMock()
+        worker.active_device = MagicMock()
+        worker.active_index = 0
+
+        # Varsayılan mod
+        self.assertEqual(worker.get_current_mode(), "Standart")
+
+        # Döngü testi
+        next_mode = worker.cycle_display_mode()
+        self.assertEqual(next_mode, "Oyun")
+        self.assertEqual(worker.get_current_mode(), "Oyun")
+        self.assertEqual(worker.get_current_brightness(), 90)
+        self.assertEqual(worker.get_current_contrast(), 75)
 
 
 if __name__ == "__main__":

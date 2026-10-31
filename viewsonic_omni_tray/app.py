@@ -113,6 +113,8 @@ class ViewSonicOmniApp:
 
         # 7. Dinleyicilerin Bağlanması
         self.worker.add_brightness_listener(self._on_worker_brightness)
+        self.worker.add_contrast_listener(self._on_worker_contrast)
+        self.worker.add_mode_listener(self._on_worker_mode)
         self.worker.add_volume_listener(self._on_worker_volume)
         self.worker.add_input_listener(self._on_worker_input)
         self.worker.add_status_listener(self._on_worker_status)
@@ -159,36 +161,35 @@ class ViewSonicOmniApp:
         desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
         self.root.after(0, lambda: self.osd.show(desc, new_val, action_name, hud_type, is_muted))
 
+    def _refresh_all_ui(self):
+        desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
+        b = self.worker.get_current_brightness()
+        c = self.worker.get_current_contrast()
+        v = self.worker.get_current_volume()
+        i = self.worker.get_current_input()
+        m = self.worker.get_current_mode()
+        st = self.worker.status
+
+        self.popup.update_values(b, c, v, i, st, m, desc)
+        self.tray.update_icon_and_title(b, st)
+
     def _on_worker_brightness(self, value: int, from_hardware: bool):
-        def _update():
-            desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
-            self.popup.update_values(value, self.worker.get_current_volume(), self.worker.get_current_input(), self.worker.status, desc)
-            self.tray.update_icon_and_title(value, self.worker.status)
-        self.root.after(0, _update)
+        self.root.after(0, self._refresh_all_ui)
+
+    def _on_worker_contrast(self, value: int, from_hardware: bool):
+        self.root.after(0, self._refresh_all_ui)
+
+    def _on_worker_mode(self, mode_name: str, mode_data: dict):
+        self.root.after(0, self._refresh_all_ui)
 
     def _on_worker_volume(self, value: int, is_muted: bool):
-        def _update():
-            desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
-            self.popup.update_values(self.worker.get_current_brightness(), value, self.worker.get_current_input(), self.worker.status, desc)
-            self.tray.update_icon_and_title(self.worker.get_current_brightness(), self.worker.status)
-        self.root.after(0, _update)
+        self.root.after(0, self._refresh_all_ui)
 
     def _on_worker_input(self, input_code: int, input_name: str):
-        def _update():
-            desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
-            self.popup.update_values(self.worker.get_current_brightness(), self.worker.get_current_volume(), input_code, self.worker.status, desc)
-            self.tray.update_icon_and_title(self.worker.get_current_brightness(), self.worker.status)
-        self.root.after(0, _update)
+        self.root.after(0, self._refresh_all_ui)
 
     def _on_worker_status(self, status: MonitorStatus, message: str):
-        def _update():
-            cur_b = self.worker.get_current_brightness()
-            cur_v = self.worker.get_current_volume()
-            cur_i = self.worker.get_current_input()
-            desc = self.worker.active_device.description if self.worker.active_device else "ViewSonic OMNI"
-            self.popup.update_values(cur_b, cur_v, cur_i, status, desc)
-            self.tray.update_icon_and_title(cur_b, status)
-        self.root.after(0, _update)
+        self.root.after(0, self._refresh_all_ui)
 
     def _on_worker_notification(self, title: str, message: str, level: str):
         self.root.after(0, lambda: self.notifications.send_notification(title, message, level))

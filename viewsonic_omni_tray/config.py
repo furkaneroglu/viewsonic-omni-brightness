@@ -26,6 +26,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "hotkeys": {
         "brightness_up": "<ctrl>+<alt>+<up>",
         "brightness_down": "<ctrl>+<alt>+<down>",
+        "contrast_up": "<ctrl>+<alt>+<right>",
+        "contrast_down": "<ctrl>+<alt>+<left>",
+        "cycle_mode": "<ctrl>+<alt>+v",
+        "mode_game": "<ctrl>+<alt>+g",
         "profile_day": "<ctrl>+<alt>+1",
         "profile_night": "<ctrl>+<alt>+2",
         "profile_read": "<ctrl>+<alt>+3",
