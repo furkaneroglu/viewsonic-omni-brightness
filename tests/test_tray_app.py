@@ -151,7 +151,7 @@ class TestNotificationEngine(unittest.TestCase):
 
 
 class TestTrayImageRendering(unittest.TestCase):
-    """4. Katman: Tray UI Simge Üretimi Testleri"""
+    """4. Katman: Tray UI Simge Üretimi & Dinamik Menü Testleri"""
 
     def test_image_dimensions_and_states(self):
         img_connected = create_tray_image(75, MonitorStatus.CONNECTED)
@@ -162,6 +162,18 @@ class TestTrayImageRendering(unittest.TestCase):
 
         img_disc = create_tray_image(0, MonitorStatus.DISCONNECTED)
         self.assertEqual(img_disc.size, (64, 64))
+
+    def test_dynamic_tray_menu(self):
+        from viewsonic_omni_tray.tray import TrayApp
+        cfg = ConfigManager()
+        worker = AsyncWriteQueueWorker(cfg)
+        worker.manager = MagicMock()
+        worker.manager.enumerate_monitors.return_value = []
+        tray = TrayApp(cfg, worker, MagicMock(), MagicMock(), MagicMock())
+        menu = tray._build_menu()
+        self.assertIsNotNone(menu)
+        items = tray._build_menu_items()
+        self.assertGreater(len(items), 5)
 
 
 class TestSingleInstanceLock(unittest.TestCase):

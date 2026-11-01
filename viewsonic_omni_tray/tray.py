@@ -84,7 +84,7 @@ class TrayApp:
             name="ViewSonicOmniTray",
             icon=initial_img,
             title="ViewSonic OMNI DDC/CI",
-            menu=self._build_menu()
+            menu=pystray.Menu(lambda: self._build_menu_items())
         )
         self.icon.default_action = lambda icon, item: self.on_open_popup()
         self.icon.run_detached()
@@ -111,11 +111,13 @@ class TrayApp:
         try:
             self.icon.title = title_text
             self.icon.icon = create_tray_image(brightness, status)
-            self.icon.menu = self._build_menu()
         except Exception as e:
             print(f"[!] Tray update error: {e}")
 
     def _build_menu(self) -> pystray.Menu:
+        return pystray.Menu(lambda: self._build_menu_items())
+
+    def _build_menu_items(self):
         cur_b = self.worker.get_current_brightness()
         cur_c = self.worker.get_current_contrast()
         cur_v = self.worker.get_current_volume()
@@ -235,9 +237,7 @@ class TrayApp:
             pystray.MenuItem("❌ Çıkış", lambda icon, item: self.on_exit()),
         ]
 
-        return pystray.Menu(*menu_items)
+        return menu_items
 
     def _on_rescan_clicked(self):
-        self.worker.rescan_monitors()
-        cur_b = self.worker.get_current_brightness()
-        self.update_icon_and_title(cur_b, self.worker.status)
+        threading.Thread(target=self.worker.rescan_monitors, daemon=True).start()

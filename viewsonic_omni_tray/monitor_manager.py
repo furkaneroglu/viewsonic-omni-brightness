@@ -5,6 +5,7 @@ Parlaklık, Ses, Giriş Kaynağı ve Güç/Uyku kontrolünü yönetir.
 """
 
 import sys
+import threading
 import ctypes
 from ctypes import wintypes
 from typing import List, Dict, Optional, Tuple
@@ -180,6 +181,8 @@ class MonitorManager:
         if sys.platform != "win32":
             raise OSError("MonitorManager yalnızca Windows işletim sisteminde (Dxva2 API) çalışır.")
 
+        self._hw_lock = threading.Lock()
+        self._capabilities_cache: Dict[str, str] = {}
         self.user32 = ctypes.windll.user32
         self.dxva2 = ctypes.windll.dxva2
         self._init_api_signatures()
@@ -271,136 +274,143 @@ class MonitorManager:
             return f"0x{unsigned:08X} - {msg}"
         return f"0x{unsigned:08X} (Kod: {err_code})"
 
-    def _read_capabilities(self, handle: wintypes.HANDLE) -> str:
+    def _read_capabilities(self, handle: wintypes.HANDLE, cache_key: str = "") -> str:
+        if cache_key and cache_key in self._capabilities_cache:
+            return self._capabilities_cache[cache_key]
         try:
             str_len = wintypes.DWORD()
             if self.dxva2.GetCapabilitiesStringLength(handle, ctypes.byref(str_len)):
                 if str_len.value > 0:
                     buf = (ctypes.c_char * str_len.value)()
                     if self.dxva2.CapabilitiesRequestAndCapabilitiesReply(handle, buf, str_len.value):
-                        return buf.value.decode("ascii", errors="ignore")
+                        caps = buf.value.decode("ascii", errors="ignore")
+                        if cache_key:
+                            self._capabilities_cache[cache_key] = caps
+                        return caps
         except Exception:
             pass
         return ""
 
     def _execute_on_handle(self, target_index: int, func):
         """Belirtilen hedef indeks için fiziksel handle alır, func(handle) çağırır ve handle'ı serbest bırakır."""
-        hmonitors: List[wintypes.HMONITOR] = []
+        with self._hw_lock:
+            hmonitors: List[wintypes.HMONITOR] = []
 
-        def _enum_cb(hmon, hdc, lprect, lparam):
-            hmonitors.append(hmon)
-            return True
+            def _enum_cb(hmon, hdc, lprect, lparam):
+                hmonitors.append(hmon)
+                return True
 
-        self.user32.EnumDisplayMonitors(None, None, self.MONITORENUMPROC(_enum_cb), 0)
+            self.user32.EnumDisplayMonitors(None, None, self.MONITORENUMPROC(_enum_cb), 0)
 
-        current_idx = 0
-        for hmon in hmonitors:
-            count = wintypes.DWORD()
-            if not self.dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(hmon, ctypes.byref(count)):
-                continue
+            current_idx = 0
+            for hmon in hmonitors:
+                count = wintypes.DWORD()
+                if not self.dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(hmon, ctypes.byref(count)):
+                    continue
 
-            phys_array = (PHYSICAL_MONITOR * count.value)()
-            if not self.dxva2.GetPhysicalMonitorsFromHMONITOR(hmon, count.value, phys_array):
-                continue
+                phys_array = (PHYSICAL_MONITOR * count.value)()
+                if not self.dxva2.GetPhysicalMonitorsFromHMONITOR(hmon, count.value, phys_array):
+                    continue
 
-            try:
-                for i in range(count.value):
-                    if current_idx == target_index:
-                        handle = phys_array[i].hPhysicalMonitor
-                        desc = str(phys_array[i].szPhysicalMonitorDescription)
-                        return func(handle, desc)
-                    current_idx += 1
-            finally:
-                self.dxva2.DestroyPhysicalMonitors(count.value, phys_array)
+                try:
+                    for i in range(count.value):
+                        if current_idx == target_index:
+                            handle = phys_array[i].hPhysicalMonitor
+                            desc = str(phys_array[i].szPhysicalMonitorDescription)
+                            return func(handle, desc)
+                        current_idx += 1
+                finally:
+                    self.dxva2.DestroyPhysicalMonitors(count.value, phys_array)
 
-        raise DDCCIDisconnectedError(f"Monitör #{target_index} bulunamadı.")
+            raise DDCCIDisconnectedError(f"Monitör #{target_index} bulunamadı.")
 
     def enumerate_monitors(self) -> List[MonitorDevice]:
         """Sisteme bağlı tüm DDC/CI monitörleri tarar; parlaklık, ses ve giriş kaynağını okur."""
-        hmonitors: List[wintypes.HMONITOR] = []
+        with self._hw_lock:
+            hmonitors: List[wintypes.HMONITOR] = []
 
-        def _enum_cb(hmon, hdc, lprect, lparam):
-            hmonitors.append(hmon)
-            return True
+            def _enum_cb(hmon, hdc, lprect, lparam):
+                hmonitors.append(hmon)
+                return True
 
-        if not self.user32.EnumDisplayMonitors(None, None, self.MONITORENUMPROC(_enum_cb), 0):
-            return []
+            if not self.user32.EnumDisplayMonitors(None, None, self.MONITORENUMPROC(_enum_cb), 0):
+                return []
 
-        devices: List[MonitorDevice] = []
-        global_idx = 0
+            devices: List[MonitorDevice] = []
+            global_idx = 0
 
-        for hmon in hmonitors:
-            count = wintypes.DWORD()
-            if not self.dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(hmon, ctypes.byref(count)):
-                continue
+            for hmon in hmonitors:
+                count = wintypes.DWORD()
+                if not self.dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(hmon, ctypes.byref(count)):
+                    continue
 
-            if count.value == 0:
-                continue
+                if count.value == 0:
+                    continue
 
-            phys_array = (PHYSICAL_MONITOR * count.value)()
-            if not self.dxva2.GetPhysicalMonitorsFromHMONITOR(hmon, count.value, phys_array):
-                continue
+                phys_array = (PHYSICAL_MONITOR * count.value)()
+                if not self.dxva2.GetPhysicalMonitorsFromHMONITOR(hmon, count.value, phys_array):
+                    continue
 
-            try:
-                for i in range(count.value):
-                    handle = phys_array[i].hPhysicalMonitor
-                    desc = str(phys_array[i].szPhysicalMonitorDescription)
+                try:
+                    for i in range(count.value):
+                        handle = phys_array[i].hPhysicalMonitor
+                        desc = str(phys_array[i].szPhysicalMonitorDescription)
 
-                    min_b, cur_b, max_b = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
-                    success = self.dxva2.GetMonitorBrightness(
-                        handle,
-                        ctypes.byref(min_b),
-                        ctypes.byref(cur_b),
-                        ctypes.byref(max_b)
-                    )
-
-                    if success:
-                        caps = self._read_capabilities(handle)
-
-                        # Ses okuma (0x62)
-                        pvct, cur_vol, mx_vol = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
-                        vol_val = 50
-                        if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x62, ctypes.byref(pvct), ctypes.byref(cur_vol), ctypes.byref(mx_vol)):
-                            vol_val = cur_vol.value
-
-                        # Giriş kaynağı okuma (0x60)
-                        cur_inp, mx_inp = wintypes.DWORD(), wintypes.DWORD()
-                        inp_val = 0x12
-                        if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x60, ctypes.byref(pvct), ctypes.byref(cur_inp), ctypes.byref(mx_inp)):
-                            inp_val = cur_inp.value
-
-                        # Kontrast okuma (0x12)
-                        cur_cnt, mx_cnt = wintypes.DWORD(), wintypes.DWORD()
-                        cnt_val = 70
-                        if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x12, ctypes.byref(pvct), ctypes.byref(cur_cnt), ctypes.byref(mx_cnt)):
-                            cnt_val = cur_cnt.value
-
-                        # Renk Preset okuma (0x14)
-                        cur_cp, mx_cp = wintypes.DWORD(), wintypes.DWORD()
-                        cp_val = 0x05
-                        if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x14, ctypes.byref(pvct), ctypes.byref(cur_cp), ctypes.byref(mx_cp)):
-                            cp_val = cur_cp.value
-
-                        dev = MonitorDevice(
-                            index=global_idx,
-                            hmonitor=hmon,
-                            description=desc,
-                            current_brightness=cur_b.value,
-                            min_brightness=min_b.value,
-                            max_brightness=max_b.value,
-                            current_volume=vol_val,
-                            current_input=inp_val,
-                            current_contrast=cnt_val,
-                            current_color_preset=cp_val,
-                            current_mode="Standart",
-                            capabilities_string=caps
+                        min_b, cur_b, max_b = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
+                        success = self.dxva2.GetMonitorBrightness(
+                            handle,
+                            ctypes.byref(min_b),
+                            ctypes.byref(cur_b),
+                            ctypes.byref(max_b)
                         )
-                        devices.append(dev)
-                        global_idx += 1
-            finally:
-                self.dxva2.DestroyPhysicalMonitors(count.value, phys_array)
 
-        return devices
+                        if success:
+                            caps = self._read_capabilities(handle, cache_key=f"{desc}_{global_idx}")
+
+                            # Ses okuma (0x62)
+                            pvct, cur_vol, mx_vol = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
+                            vol_val = 50
+                            if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x62, ctypes.byref(pvct), ctypes.byref(cur_vol), ctypes.byref(mx_vol)):
+                                vol_val = cur_vol.value
+
+                            # Giriş kaynağı okuma (0x60)
+                            cur_inp, mx_inp = wintypes.DWORD(), wintypes.DWORD()
+                            inp_val = 0x12
+                            if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x60, ctypes.byref(pvct), ctypes.byref(cur_inp), ctypes.byref(mx_inp)):
+                                inp_val = cur_inp.value
+
+                            # Kontrast okuma (0x12)
+                            cur_cnt, mx_cnt = wintypes.DWORD(), wintypes.DWORD()
+                            cnt_val = 70
+                            if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x12, ctypes.byref(pvct), ctypes.byref(cur_cnt), ctypes.byref(mx_cnt)):
+                                cnt_val = cur_cnt.value
+
+                            # Renk Preset okuma (0x14)
+                            cur_cp, mx_cp = wintypes.DWORD(), wintypes.DWORD()
+                            cp_val = 0x05
+                            if self.dxva2.GetVCPFeatureAndVCPFeatureReply(handle, 0x14, ctypes.byref(pvct), ctypes.byref(cur_cp), ctypes.byref(mx_cp)):
+                                cp_val = cur_cp.value
+
+                            dev = MonitorDevice(
+                                index=global_idx,
+                                hmonitor=hmon,
+                                description=desc,
+                                current_brightness=cur_b.value,
+                                min_brightness=min_b.value,
+                                max_brightness=max_b.value,
+                                current_volume=vol_val,
+                                current_input=inp_val,
+                                current_contrast=cnt_val,
+                                current_color_preset=cp_val,
+                                current_mode="Standart",
+                                capabilities_string=caps
+                            )
+                            devices.append(dev)
+                            global_idx += 1
+                finally:
+                    self.dxva2.DestroyPhysicalMonitors(count.value, phys_array)
+
+            return devices
 
     # --- Parlaklık (Luminance VCP 0x10) ---
     def set_brightness(self, target_index: int, value: int) -> int:

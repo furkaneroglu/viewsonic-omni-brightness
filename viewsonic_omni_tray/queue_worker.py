@@ -175,26 +175,29 @@ class AsyncWriteQueueWorker:
 
     # --- Monitör Tarama & Seçim ---
     def rescan_monitors(self) -> bool:
+        try:
+            devs = self.manager.enumerate_monitors()
+        except Exception as e:
+            with self._lock:
+                self.status = MonitorStatus.ERROR
+                self.status_message = f"Tarama hatası: {e}"
+                status = self.status
+                msg = self.status_message
+            self._notify_status(status, msg)
+            return False
+
         with self._lock:
-            try:
-                devs = self.manager.enumerate_monitors()
-                self.devices = devs
+            self.devices = devs
 
-                if not devs:
-                    old_status = self.status
-                    self.active_device = None
-                    self.status = MonitorStatus.DISCONNECTED
-                    self.status_message = "Hiçbir DDC/CI monitör algılanamadı."
-                    self._notify_status(self.status, self.status_message)
-                    self._notify_devices()
-                    if old_status == MonitorStatus.CONNECTED:
-                        self._notify_user(
-                            "Monitör Bağlantısı Kesildi",
-                            "DDC/CI uyumlu monitör bulunamadı.",
-                            level="warning"
-                        )
-                    return False
-
+            if not devs:
+                old_status = self.status
+                self.active_device = None
+                self.status = MonitorStatus.DISCONNECTED
+                self.status_message = "Hiçbir DDC/CI monitör algılanamadı."
+                status = self.status
+                msg = self.status_message
+                should_notify_disconnected = (old_status == MonitorStatus.CONNECTED)
+            else:
                 target = None
                 match_keyword = self.config.monitor_match.lower()
                 for d in devs:
@@ -219,31 +222,40 @@ class AsyncWriteQueueWorker:
                 self._current_input = target.current_input
                 self.status = MonitorStatus.CONNECTED
                 self.status_message = f"{target.description} bağlandı."
+                status = self.status
+                msg = self.status_message
+                should_notify_connected = prev_status in (MonitorStatus.SLEEPING, MonitorStatus.DISCONNECTED, MonitorStatus.ERROR)
 
-                self._notify_brightness(self._current_brightness, from_hardware=True)
-                self._notify_contrast(self._current_contrast, from_hardware=True)
-                self._notify_mode(self._current_mode, DISPLAY_MODES.get(self._current_mode, {}))
-                self._notify_volume(self._current_volume, self._is_muted)
-                self._notify_input(self._current_input, target.input_name)
-                self._notify_status(self.status, self.status_message)
-                self._notify_devices()
+        if not devs:
+            self._notify_status(status, msg)
+            self._notify_devices()
+            if should_notify_disconnected:
+                self._notify_user(
+                    "Monitör Bağlantısı Kesildi",
+                    "DDC/CI uyumlu monitör bulunamadı.",
+                    level="warning"
+                )
+            return False
 
-                if prev_status in (MonitorStatus.SLEEPING, MonitorStatus.DISCONNECTED, MonitorStatus.ERROR):
-                    self._notify_user(
-                        "Monitör Bağlandı",
-                        f"'{target.description}' DDC/CI üzerinden aktif.",
-                        level="info"
-                    )
+        self._notify_brightness(self._current_brightness, from_hardware=True)
+        self._notify_contrast(self._current_contrast, from_hardware=True)
+        self._notify_mode(self._current_mode, DISPLAY_MODES.get(self._current_mode, {}))
+        self._notify_volume(self._current_volume, self._is_muted)
+        self._notify_input(self._current_input, target.input_name)
+        self._notify_status(status, msg)
+        self._notify_devices()
 
-                return True
+        if should_notify_connected:
+            self._notify_user(
+                "Monitör Bağlandı",
+                f"'{target.description}' DDC/CI üzerinden aktif.",
+                level="info"
+            )
 
-            except Exception as e:
-                self.status = MonitorStatus.ERROR
-                self.status_message = f"Tarama hatası: {e}"
-                self._notify_status(self.status, self.status_message)
-                return False
+        return True
 
     def select_device(self, index: int):
+        selected_dev = None
         with self._lock:
             for d in self.devices:
                 if d.index == index:
@@ -260,14 +272,17 @@ class AsyncWriteQueueWorker:
                     self._current_input = d.current_input
                     self.status = MonitorStatus.CONNECTED
                     self.status_message = f"{d.description} seçildi."
-                    self._notify_brightness(self._current_brightness, from_hardware=True)
-                    self._notify_contrast(self._current_contrast, from_hardware=True)
-                    self._notify_mode(self._current_mode, DISPLAY_MODES.get(self._current_mode, {}))
-                    self._notify_volume(self._current_volume, self._is_muted)
-                    self._notify_input(self._current_input, d.input_name)
-                    self._notify_status(self.status, self.status_message)
-                    self._notify_devices()
-                    return
+                    selected_dev = d
+                    break
+
+        if selected_dev:
+            self._notify_brightness(self._current_brightness, from_hardware=True)
+            self._notify_contrast(self._current_contrast, from_hardware=True)
+            self._notify_mode(self._current_mode, DISPLAY_MODES.get(self._current_mode, {}))
+            self._notify_volume(self._current_volume, self._is_muted)
+            self._notify_input(self._current_input, selected_dev.input_name)
+            self._notify_status(self.status, self.status_message)
+            self._notify_devices()
 
     # --- Parlaklık Yönetimi ---
     def get_current_brightness(self) -> int:
@@ -322,20 +337,23 @@ class AsyncWriteQueueWorker:
             self._current_contrast = target_c
             self._current_color_preset = target_cp
 
-        try:
-            self.manager.apply_display_mode(target_idx, mode_name)
-            self._notify_brightness(target_b, from_hardware=True)
-            self._notify_contrast(target_c, from_hardware=True)
-            self._notify_mode(mode_name, mode_data)
-            self._notify_user(
-                f"{mode_data['icon']} {mode_data['name']} Aktif",
-                f"Parlaklık: %{target_b} | Kontrast: %{target_c} ({mode_data['desc']})",
-                level="info"
-            )
-            return True
-        except Exception as e:
-            print(f"[!] Ekran modu uygulama hatası: {e}")
-            return False
+        self._notify_brightness(target_b, from_hardware=False)
+        self._notify_contrast(target_c, from_hardware=False)
+        self._notify_mode(mode_name, mode_data)
+        self._notify_user(
+            f"{mode_data['icon']} {mode_data['name']} Aktif",
+            f"Parlaklık: %{target_b} | Kontrast: %{target_c} ({mode_data['desc']})",
+            level="info"
+        )
+
+        def _bg_apply():
+            try:
+                self.manager.apply_display_mode(target_idx, mode_name)
+            except Exception as e:
+                print(f"[!] Ekran modu uygulama hatası: {e}")
+
+        threading.Thread(target=_bg_apply, daemon=True, name="DDC-ApplyMode").start()
+        return True
 
     def cycle_display_mode(self) -> str:
         """Ekran modları arasında sırayla döner (Standart -> Oyun -> Film -> Metin -> Gece -> Standart)."""
@@ -391,13 +409,17 @@ class AsyncWriteQueueWorker:
             self._is_muted = not self._is_muted
             muted = self._is_muted
             target_idx = self.active_index
-        try:
-            self.manager.set_mute(target_idx, muted)
-            self._notify_volume(self._target_volume, muted)
-            return muted
-        except Exception as e:
-            print(f"[!] Mute hatası: {e}")
-            return muted
+            vol = self._target_volume
+        self._notify_volume(vol, muted)
+
+        def _bg_mute():
+            try:
+                self.manager.set_mute(target_idx, muted)
+            except Exception as e:
+                print(f"[!] Mute hatası: {e}")
+
+        threading.Thread(target=_bg_mute, daemon=True, name="DDC-Mute").start()
+        return muted
 
     # --- Giriş Kaynağı Yönetimi (VCP 0x60) ---
     def get_current_input(self) -> int:
@@ -409,13 +431,17 @@ class AsyncWriteQueueWorker:
         with self._lock:
             target_idx = self.active_index
             self._current_input = source_code
-        try:
-            self.manager.set_input_source(target_idx, source_code)
-            input_name = INPUT_SOURCES.get(source_code, f"0x{source_code:02X}")
-            self._notify_input(source_code, input_name)
-            self._notify_user("Giriş Değiştirildi", f"Aktif Giriş: {input_name}", level="info")
-        except Exception as e:
-            print(f"[!] Giriş değiştirme hatası: {e}")
+        input_name = INPUT_SOURCES.get(source_code, f"0x{source_code:02X}")
+        self._notify_input(source_code, input_name)
+        self._notify_user("Giriş Değiştirildi", f"Aktif Giriş: {input_name}", level="info")
+
+        def _bg_input():
+            try:
+                self.manager.set_input_source(target_idx, source_code)
+            except Exception as e:
+                print(f"[!] Giriş değiştirme hatası: {e}")
+
+        threading.Thread(target=_bg_input, daemon=True, name="DDC-Input").start()
 
     def cycle_input_source(self):
         """Giriş kaynakları arasında sırayla döner (DP -> HDMI 1 -> HDMI 2 -> DP)."""
@@ -433,25 +459,32 @@ class AsyncWriteQueueWorker:
         """Monitörü bekleme (Standby 0x04) moduna alır."""
         with self._lock:
             target_idx = self.active_index
-        try:
-            self._notify_user("Monitör Uykuya Alınıyor", "Monitör Standby moduna geçiriliyor...", level="info")
-            self.manager.set_power_mode(target_idx, 0x04)
-            with self._lock:
-                self.status = MonitorStatus.SLEEPING
-                self.status_message = "Monitör uyku modunda."
-            self._notify_status(self.status, self.status_message)
-        except Exception as e:
-            print(f"[!] Uykuya alma hatası: {e}")
+            self.status = MonitorStatus.SLEEPING
+            self.status_message = "Monitör uyku modunda."
+        self._notify_user("Monitör Uykuya Alınıyor", "Monitör Standby moduna geçiriliyor...", level="info")
+        self._notify_status(self.status, self.status_message)
+
+        def _bg_sleep():
+            try:
+                self.manager.set_power_mode(target_idx, 0x04)
+            except Exception as e:
+                print(f"[!] Uykuya alma hatası: {e}")
+
+        threading.Thread(target=_bg_sleep, daemon=True, name="DDC-Sleep").start()
 
     def wake_monitor(self):
         """Monitörü uyandırır (On 0x01)."""
         with self._lock:
             target_idx = self.active_index
-        try:
-            self.manager.set_power_mode(target_idx, 0x01)
-            self.rescan_monitors()
-        except Exception as e:
-            print(f"[!] Uyandırma hatası: {e}")
+
+        def _bg_wake():
+            try:
+                self.manager.set_power_mode(target_idx, 0x01)
+                self.rescan_monitors()
+            except Exception as e:
+                print(f"[!] Uyandırma hatası: {e}")
+
+        threading.Thread(target=_bg_wake, daemon=True, name="DDC-Wake").start()
 
     # --- Asenkron Donanım Kuyruk Döngüsü (Parlaklık & Ses) ---
     def _hardware_worker_loop(self):
@@ -573,15 +606,20 @@ class AsyncWriteQueueWorker:
                 if idle_time > self.watchdog_interval:
                     try:
                         hw_val = self.manager.get_brightness(self.active_index)
+                        notify = False
                         with self._lock:
                             if hw_val != self._current_brightness and not self._request_event.is_set():
                                 self._current_brightness = hw_val
                                 self._target_brightness = hw_val
-                                self._notify_brightness(hw_val, from_hardware=True)
+                                notify = True
+                        if notify:
+                            self._notify_brightness(hw_val, from_hardware=True)
                     except DDCCIDisconnectedError:
                         with self._lock:
                             self.status = MonitorStatus.SLEEPING
                             self.status_message = "Monitör uykuya geçti."
-                        self._notify_status(self.status, self.status_message)
+                            status = self.status
+                            msg = self.status_message
+                        self._notify_status(status, msg)
                     except Exception:
                         pass

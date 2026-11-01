@@ -3,6 +3,7 @@ ViewSonic OMNI DDC/CI Tray - Taskbar Slider & Presets Popup (Tray UI)
 Parlaklık, Kontrast, Ekran Modları (ViewMode), Ses, Giriş Kaynağı ve Uyku kontrollerini içeren modern koyu temalı hızlı kontrol paneli.
 """
 
+import time
 import tkinter as tk
 from typing import Optional, Callable, Dict
 from .config import ConfigManager
@@ -20,6 +21,8 @@ class SliderPopup:
 
         self.width = 380
         self.height = 570
+        self._last_toggle_time: float = 0.0
+        self._last_hide_time: float = 0.0
         self._window: Optional[tk.Toplevel] = None
         self._mode_buttons: Dict[str, tk.Button] = {}
         self.input_buttons: Dict[int, tk.Button] = {}
@@ -466,6 +469,15 @@ class SliderPopup:
             self.status_badge.config(text="● Bağlantı Yok", fg="#ef4444")
 
     def toggle(self):
+        now = time.time()
+        if now - self._last_toggle_time < 0.25:
+            return
+        self._last_toggle_time = now
+
+        # FocusOut sonrası hızlı tetiklemeyi önle
+        if now - self._last_hide_time < 0.25:
+            return
+
         if self._window is not None and self._window.winfo_viewable():
             self.hide()
         else:
@@ -495,11 +507,19 @@ class SliderPopup:
         self._window.focus_force()
 
     def hide(self):
-        if self._window is not None:
+        if self._window is not None and self._window.winfo_viewable():
+            self._last_hide_time = time.time()
             self._window.withdraw()
 
     def _on_focus_out(self, event):
         if self._window is not None and self._window.winfo_viewable():
-            focused = self._window.focus_get()
-            if focused is None:
+            self.root.after(100, self._check_focus_and_hide)
+
+    def _check_focus_and_hide(self):
+        if self._window is not None and self._window.winfo_viewable():
+            try:
+                focused = self._window.focus_get()
+                if focused is None:
+                    self.hide()
+            except Exception:
                 self.hide()
