@@ -47,6 +47,7 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(cfg.profiles["Oyun"], 90)
         self.assertGreaterEqual(cfg.throttle_ms, 50)
         self.assertGreaterEqual(cfg.debounce_ms, 40)
+        self.assertFalse(cfg.show_notifications)
 
     def test_config_step_clamping(self):
         cfg = ConfigManager()

@@ -245,13 +245,6 @@ class AsyncWriteQueueWorker:
         self._notify_status(status, msg)
         self._notify_devices()
 
-        if should_notify_connected:
-            self._notify_user(
-                "Monitör Bağlandı",
-                f"'{target.description}' DDC/CI üzerinden aktif.",
-                level="info"
-            )
-
         return True
 
     def select_device(self, index: int):
@@ -340,11 +333,6 @@ class AsyncWriteQueueWorker:
         self._notify_brightness(target_b, from_hardware=False)
         self._notify_contrast(target_c, from_hardware=False)
         self._notify_mode(mode_name, mode_data)
-        self._notify_user(
-            f"{mode_data['icon']} {mode_data['name']} Aktif",
-            f"Parlaklık: %{target_b} | Kontrast: %{target_c} ({mode_data['desc']})",
-            level="info"
-        )
 
         def _bg_apply():
             try:
@@ -433,7 +421,6 @@ class AsyncWriteQueueWorker:
             self._current_input = source_code
         input_name = INPUT_SOURCES.get(source_code, f"0x{source_code:02X}")
         self._notify_input(source_code, input_name)
-        self._notify_user("Giriş Değiştirildi", f"Aktif Giriş: {input_name}", level="info")
 
         def _bg_input():
             try:
@@ -461,7 +448,6 @@ class AsyncWriteQueueWorker:
             target_idx = self.active_index
             self.status = MonitorStatus.SLEEPING
             self.status_message = "Monitör uyku modunda."
-        self._notify_user("Monitör Uykuya Alınıyor", "Monitör Standby moduna geçiriliyor...", level="info")
         self._notify_status(self.status, self.status_message)
 
         def _bg_sleep():

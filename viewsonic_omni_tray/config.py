@@ -48,7 +48,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "ui": {
         "show_osd": True,        # Kısayol kullanıldığında ekranda mini HUD göster
         "osd_duration_ms": 1400, # HUD ekranda kalma süresi
-        "show_notifications": True # Windows bildirimlerini göster
+        "show_notifications": False # Windows bildirimlerini göster (varsayılan: kapalı)
     },
     "run_on_startup": False
 }
@@ -156,7 +156,7 @@ class ConfigManager:
 
     @property
     def show_notifications(self) -> bool:
-        return self.data.get("ui", {}).get("show_notifications", True)
+        return self.data.get("ui", {}).get("show_notifications", False)
 
     @show_notifications.setter
     def show_notifications(self, val: bool):
